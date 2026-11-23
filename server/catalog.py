@@ -9,7 +9,7 @@ The groups mirror the add-in sources: plugin/Read/<Group>Read.cs and plugin/Edit
 """
 from __future__ import annotations
 
-BRIDGE_VERSION = "0.13.3"   # keep plugin/BridgeInfo.cs in step; the tests check it
+BRIDGE_VERSION = "0.14.0"   # keep plugin/BridgeInfo.cs in step; the tests check it
 
 Entry = tuple[str, dict[str, str]]
 Group = dict[str, Entry]

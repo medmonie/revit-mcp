@@ -1,5 +1,14 @@
 # Revit MCP implementation log
 
+
+## 2026-11-23 · Version 0.14.0 (installer package)
+
+- Modelled on civil3d-mcp's build_package.bat / package\install.bat. Added: automatic client configuration
+  (configure_clients.ps1: Claude Desktop JSON merge, Codex TOML table replace, backups) and Unblock-File on the unzipped
+  package (Revit 2024 refuses DLLs carrying the Zone.Identifier mark).
+- build_package.bat passes RevitDir with a doubled trailing backslash so the quoted argument is not escaped.
+- The server exe bundles the lazily imported modules (excel_io, qs_report, bbs_report, xlsx_util) as hidden imports.
+
 ## 2026-11-23 · Live purge, Undo and rollback checks on 0.13.3
 
 Updated this log to record follow-up runtime coverage. The tests used disposable local copies. No source code changes were needed.

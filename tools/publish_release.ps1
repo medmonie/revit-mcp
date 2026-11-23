@@ -48,7 +48,7 @@ foreach ($file in $files) {
         Invoke-RestMethod -Method Delete -Uri "$api/releases/assets/$($old.id)" -Headers $headers | Out-Null
     }
     $upload = "https://uploads.github.com/repos/$Repo/releases/$($release.id)/assets?name=$([Uri]::EscapeDataString($name))"
-    $asset = Invoke-RestMethod -Method Post -Uri $upload -Headers $headers -InFile $path -ContentType 'application/zip'
-    Write-Output ("Uploaded {0} ({1:N1} MB)" -f $asset.name, ($asset.size / 1MB))
+    Invoke-RestMethod -Method Post -Uri $upload -Headers $headers -InFile $path -ContentType 'application/zip' | Out-Null
+    Write-Output ("Uploaded {0} ({1:N1} MB)" -f $name, ((Get-Item -LiteralPath $path).Length / 1MB))
 }
 Write-Output "Release page: $($release.html_url)"

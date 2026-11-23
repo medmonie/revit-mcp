@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.14.0 - 2026-11-23
+
+Installer package, as in the Civil 3D bridge: nothing to install by hand on the user's PC.
+- build_package.bat: builds the add-in for Revit 2024 (net48) and 2027 (net10) against the installed Revit or
+  refs\<year>\ (else plugin\prebuilt\<year>\), the MCP server as one exe (PyInstaller, revit-mcp-server.exe), and
+  dist\RevitMcp.zip + dist\RevitMcp-source.zip. Log package_build.txt.
+- package\install.bat: installs the add-in for each Revit found, the server in %LOCALAPPDATA%\RevitMcpBridge, clears the
+  internet mark on the unzipped files (Revit 2024 / .NET Framework will not load a marked DLL), and adds "revit" to
+  Claude Desktop (normal and Microsoft Store config) and Codex through package\configure_clients.ps1, keeping the other
+  servers and backing each file up. Log install_result.txt.
+- package\uninstall.bat: removes the add-in from every Revit year, the server, and the "revit" entries.
+- README: install section split into option A (installer zip) and option B (source folder), as in civil3d-mcp.
+- No add-in or server behaviour changed since 0.13.3.
+
 ## 0.13.3 - 2026-11-23
 
 - Fixed a Revit 2024 native crash during purge preview rollback. Purge previews enumerate first-pass candidates. The updated server requires protocol 4 for edits to keep previews off older add-ins.

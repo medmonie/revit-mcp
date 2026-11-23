@@ -11,7 +11,16 @@ obj/
 *.old*
 plugin/local.props
 
+# Packaging output
+dist/
+build/
+*.spec
+*.zip
+plugin/prebuilt/
+
 # Local logs and test results
+package_build.txt
+install_result.txt
 build_result.txt
 setup_result.txt
 publish_result.txt

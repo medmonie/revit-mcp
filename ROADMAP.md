@@ -1,7 +1,7 @@
 # Roadmap
 
 Planned and finished work for the Revit MCP bridge, by phase. S = one build batch, M = one or two batches with a live
-test, L = several batches. Status as of version 0.13.3 (November 2026).
+test, L = several batches. Status as of version 0.14.0 (November 2026).
 
 | Status | Meaning |
 |---|---|

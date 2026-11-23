@@ -1,6 +1,6 @@
 # Revit MCP bridge
 
-**Version 0.13 · Autodesk Revit 2027 and 2024 · Windows**
+**Version 0.14 · Autodesk Revit 2027 and 2024 · Windows**
 
 Lets Claude work in the model that is open in Revit on this computer: read it, measure it, check it, and, after you allow
 it once per Revit session, build and fix it. One tool covers modelling, editing, quantity surveying, model QA, CAD to
@@ -34,38 +34,74 @@ The bridge connection stays on this machine. MCP results are returned to the con
 
 ## 1. Install
 
-Needs Revit 2027 and/or 2024, the .NET 10 SDK, Python 3.10+, and an MCP client.
+### Option A - installer zip (any PC, recommended)
+
+Needs Revit 2024 and/or 2027 and an MCP client: Claude Desktop, the ChatGPT desktop app, or Codex. **Nothing else**:
+the package includes the MCP server as one exe, so no Python, no .NET SDK and no build.
 
 1. Close Revit.
+2. Download **`RevitMcp.zip`** (from this repository's Releases, or built with `build_package.bat`), unzip it and
+   double-click **`install.bat`**. It
+   - installs the add-in for each Revit it finds: `%APPDATA%\Autodesk\Revit\Addins\<year>\` (`RevitMcpBridge.addin` +
+     `RevitMcpBridge\RevitMcpBridge.dll`), and clears the "downloaded from the internet" mark that stops Revit 2024
+     loading a DLL from a zip;
+   - installs the server: `%LOCALAPPDATA%\RevitMcpBridge\revit-mcp-server.exe`;
+   - **adds `"revit"` to Claude Desktop** (`claude_desktop_config.json`, normal and Microsoft Store installs) **and to
+     Codex** (`~/.codex/config.toml`), keeping every other server (`civil3d` ...) and setting. The previous file is
+     saved next to it as `.bak-<date>`.
+3. Fully quit Claude Desktop (tray icon > Quit) and start it again.
+4. Start Revit. The first time it asks whether to load the unsigned add-in: choose **Always Load**. A panel
+   **Claude MCP** appears on the **Add-Ins** tab.
+5. Open a model and ask: *"Ping Revit and tell me which model is open."* The answer shows the add-in version (0.14.0),
+   the Revit version, and the active model's `documentId`.
+
+**ChatGPT desktop app.** Settings > MCP servers > Add server. Name it `revit`, choose STDIO, and use the server path
+printed by `install.bat` as the command, with no arguments.
+
+If `install.bat` could not change a client's settings, it says so; add this inside `"mcpServers"` by hand (the
+snippets are also saved next to the server):
+
+```json
+"revit": { "command": "C:\\Users\\<you>\\AppData\\Local\\RevitMcpBridge\\revit-mcp-server.exe" }
+```
+
+**Update:** close Revit and the MCP client, run the new `install.bat`, start both again. **Uninstall:** `uninstall.bat`
+removes the add-in, the server and the `revit` entry from Claude Desktop and Codex.
+
+### Option B - from this source folder (the development PC)
+
+Needs the .NET 10 SDK and Python 3.10+.
+
+1. Close Revit (or not: the loaded DLL is moved aside, and the new one loads at the next start).
 2. Double-click **`build.bat`**. It builds the add-in once per installed Revit and copies it to
-   `%APPDATA%\Autodesk\Revit\Addins\<year>\` (`RevitMcpBridge.addin` + `RevitMcpBridge\RevitMcpBridge.dll`).
-   The result is in `build_result.txt` (`EXIT_2027=0` / `EXIT_2024=0` means built and deployed).
+   `%APPDATA%\Autodesk\Revit\Addins\<year>\`. The result is in `build_result.txt` (`EXIT_2027=0` / `EXIT_2024=0` means
+   built and deployed).
 3. Double-click **`setup_server.bat`** (once). It creates `server\.venv`, installs `mcp` and `openpyxl` and writes
    `claude_config_snippet.json` and `codex_config_snippet.toml` using the current project folder.
-4. In Claude: **Settings > Developer > Edit Config**. Add the `"revit"` entry from the snippet to `mcpServers`,
-   next to `"civil3d"`:
+4. In Claude: **Settings > Developer > Edit Config**. Add the `"revit"` entry from the snippet to `mcpServers`:
    ```json
-   {
-     "mcpServers": {
-       "civil3d": { "...": "unchanged" },
-       "revit": {
-         "command": "C:\\Users\\<you>\\Desktop\\Revit MCP\\revit-mcp\\server\\.venv\\Scripts\\python.exe",
-         "args": ["C:\\Users\\<you>\\Desktop\\Revit MCP\\revit-mcp\\server\\server.py"]
-       }
-     }
+   "revit": {
+     "command": "C:\\path\\to\\revit-mcp\\server\\.venv\\Scripts\\python.exe",
+     "args": ["C:\\path\\to\\revit-mcp\\server\\server.py"]
    }
    ```
-5. Restart Claude completely (quit from the tray icon). Start Revit; the first time it asks whether to load the
-   unsigned add-in: choose **Always Load**. A panel **Claude MCP** appears on the **Add-Ins** tab.
-6. Open a model and ask your client to ping Revit. The answer shows the add-in version (0.13.3), the Revit version, and the active model's `documentId`.
+5. Restart Claude completely and continue with steps 4 and 5 of option A.
 
-For **local Codex on Windows**, merge the generated `codex_config_snippet.toml` into the Codex MCP configuration and reload the client. The snippet enables separate `revit_read` and `revit_edit` tools.
+**`build_package.bat`** makes, in `dist\`, the installer zip of option A (`RevitMcp.zip`) and a clean source zip
+(`RevitMcp-source.zip`). It builds each Revit year against the installed Revit or against `refs\<year>\RevitAPI.dll`
+(which `build.bat` copies there), else reuses `plugin\prebuilt\<year>\`; `package_build.txt` ends with `RESULT=OK`.
+
+### Other clients and notes
+
+For **local Codex on Windows** the installer (option A) or `codex_config_snippet.toml` (option B) adds the server with
+separate `revit_read` and `revit_edit` tools.
 
 For **ChatGPT web**, a workspace with custom MCP and Secure MCP Tunnel access can route the local stdio command through a private tunnel. See the [OpenAI Secure MCP Tunnel setup](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels).
 
-**After an update**, restart Revit and the MCP client to load matching versions. The 0.13.3 server requires an add-in with bridge protocol 4 for editing. See the [implementation log](docs/IMPLEMENTATION_LOG.md) for the changes.
+**After an update**, restart Revit and the MCP client to load matching versions. The server requires an add-in with
+bridge protocol 4 for editing. See the [implementation log](docs/IMPLEMENTATION_LOG.md) for the changes.
 
-> **Revit 2024 note.** The 2024 build targets .NET Framework 4.8 and downloads the package
+> **Revit 2024 note (building only).** The 2024 build targets .NET Framework 4.8 and downloads the package
 > `Microsoft.NETFramework.ReferenceAssemblies` from nuget.org on the first build. Without internet only the 2024
 > build fails; 2027 is unaffected.
 
@@ -486,7 +522,7 @@ Also good to know:
 | A CAD builder finds nothing | Wrong layer or broken outlines: read the layer with `get_cad_geometry`; for slabs try mode `outer` with `preview`. |
 | `EXIT_2024` is not 0 but 2027 built | No internet for the one-time NuGet download, see the note in section 1. |
 
-Where to look: `build_result.txt` (build), `setup_result.txt` (server setup), `tests\results\` (tests),
+Where to look: `install_result.txt` (installer), `build_result.txt` (build), `package_build.txt` (installer zip), `setup_result.txt` (server setup), `tests\results\` (tests),
 `%LOCALAPPDATA%\RevitMcpBridge\audit.log` (what was edited).
 
 ---
@@ -517,7 +553,9 @@ server/
   bridge_client.py            connection, token, session selection
   qs_report.py, excel_io.py   workbooks; xlsx_util.py shared header style, path checks, cell values
 tests/                        smoke_test.py (no Revit needed), live_read.py (against the open model)
-tools/gen_docs.py             writes docs/ACTIONS.md from the catalogue
+tools/                        gen_docs.py (docs/ACTIONS.md), write_client_configs.py, deploy_addin.ps1 (used by build.bat)
+package/                      install.bat, uninstall.bat, configure_clients.ps1, INSTALL.txt (go into RevitMcp.zip)
+build_package.bat             dist\RevitMcp.zip (installer) and dist\RevitMcp-source.zip; log package_build.txt
 ```
 
 **Adding an action**

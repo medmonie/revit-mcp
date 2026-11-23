@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# .NET build output
+bin/
+obj/
+*.user
+*.old*
+plugin/local.props
+
+# Local logs and test results
+build_result.txt
+setup_result.txt
+publish_result.txt
+tests/results/
+
+# Machine-specific client configs (written by setup_server.bat / tools/write_client_configs.py)
+claude_config_snippet.json
+codex_config_snippet.toml
+
+# Autodesk reference DLLs: never committed (licensed; the build uses the local Revit install)
+refs/
+*.dll

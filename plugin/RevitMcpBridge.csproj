@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Optional machine-specific overrides (Revit install folders). Copy local.props.example to local.props. -->
+  <Import Project="local.props" Condition="Exists('local.props')" />
+
+  <!-- One source, built once per Revit year:
+           dotnet build -c Release -p:RevitYear=2027      (.NET 10)
+           dotnet build -c Release -p:RevitYear=2024      (.NET Framework 4.8)
+       2025 / 2026 (.NET 8) use the same switch once their Revit is installed.
+       The code has NO dependencies besides Revit itself (own JSON reader/writer), so nothing can clash with the DLLs
+       of other add-ins, and it only uses library members that exist in .NET Framework 4.8 as well. -->
+  <PropertyGroup>
+    <TargetFramework Condition="'$(RevitYear)'=='2024'">net48</TargetFramework>
+    <TargetFramework Condition="'$(RevitYear)'=='2025' or '$(RevitYear)'=='2026'">net8.0-windows</TargetFramework>
+    <TargetFramework Condition="'$(TargetFramework)'==''">net10.0-windows</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>RevitMcpBridge</AssemblyName>
+    <RootNamespace>RevitMcpBridge</RootNamespace>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>bin\$(RevitYear)\</OutputPath>
+    <DefineConstants>$(DefineConstants);REVIT$(RevitYear)</DefineConstants>
+    <NoWarn>$(NoWarn);MSB3277;MSB3270;CA1416;CS1701;CS1702</NoWarn>
+
+    <RevitDir Condition="'$(RevitDir)'==''">C:\Program Files\Autodesk\Revit $(RevitYear)\</RevitDir>
+    <AddinDir>$(APPDATA)\Autodesk\Revit\Addins\$(RevitYear)\</AddinDir>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)'!='net48'">
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The other year's generated files live under obj\ too: keep them out of this build. -->
+    <Compile Remove="obj\**;bin\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Private=false: never copy Revit's DLLs next to ours. -->
+    <Reference Include="RevitAPI"><HintPath>$(RevitDir)RevitAPI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="RevitAPIUI"><HintPath>$(RevitDir)RevitAPIUI.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)'=='net48'">
+    <!-- Lets the .NET SDK compile for .NET Framework 4.8 without Visual Studio (downloaded from nuget.org once). -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="System.Xaml" />
+  </ItemGroup>
+
+  <Target Name="DeployAddin" AfterTargets="Build" Condition="'$(DeployAddin)'!='false'">
+    <Exec Command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\tools\deploy_addin.ps1&quot; -Dll &quot;$(TargetPath)&quot; -Manifest &quot;$(MSBuildProjectDirectory)\RevitMcpBridge.addin&quot; -Destination &quot;$([System.IO.Path]::Combine('$(AddinDir)', '.'))&quot;" />
+  </Target>
+
+</Project>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>Revit MCP bridge</Name>
+    <!-- Relative to this .addin file. -->
+    <Assembly>RevitMcpBridge\RevitMcpBridge.dll</Assembly>
+    <FullClassName>RevitMcpBridge.App</FullClassName>
+    <ClientId>8C1F4E7A-3B52-4D96-A0E3-5F7B9C2D4E18</ClientId>
+    <VendorId>LOCAL</VendorId>
+    <VendorDescription>Local MCP bridge for Revit (read, and edit after a one-time permission)</VendorDescription>
+  </AddIn>
+</RevitAddIns>

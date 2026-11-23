@@ -1,0 +1,8 @@
+<Project>
+  <!-- Imported before the SDK: each Revit year gets its own obj folder, so the 2024 (.NET Framework 4.8) and
+       2027 (.NET 10) builds never share restore files. -->
+  <PropertyGroup>
+    <RevitYear Condition="'$(RevitYear)'==''">2027</RevitYear>
+    <BaseIntermediateOutputPath>obj\$(RevitYear)\</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>

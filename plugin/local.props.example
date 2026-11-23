@@ -1,0 +1,7 @@
+<Project>
+  <!-- Copy to local.props (same folder) only if Revit is NOT installed in the default location.
+       The value is the folder holding RevitAPI.dll, ending in a backslash. $(RevitYear) is 2024, 2027, ... -->
+  <PropertyGroup>
+    <!-- <RevitDir>D:\Autodesk\Revit $(RevitYear)\</RevitDir> -->
+  </PropertyGroup>
+</Project>

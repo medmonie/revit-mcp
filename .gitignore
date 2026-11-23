@@ -24,6 +24,7 @@ install_result.txt
 build_result.txt
 setup_result.txt
 publish_result.txt
+release_result.txt
 tools/commit_message.txt
 tests/results/
 

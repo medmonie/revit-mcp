@@ -38,7 +38,7 @@ powershell -NoProfile -Command "Compress-Archive -Path dist\RevitMcp\* -Destinat
 echo [4/4] source zip >> "%LOG%"
 set "SRC=dist\_src\revit-mcp"
 robocopy . "%SRC%" /E /NFL /NDL /NJH /NJS /XD dist bin obj .venv __pycache__ .git .vs results refs prebuilt ^
-  /XF local.props build_result.txt setup_result.txt package_build.txt publish_result.txt install_result.txt ^
+  /XF local.props build_result.txt setup_result.txt package_build.txt publish_result.txt install_result.txt release_result.txt ^
   claude_config_snippet.json codex_config_snippet.toml publish_to_github.bat commit_message.txt *.user *.suo *.zip *.old* >> "%LOG%" 2>&1
 if errorlevel 8 goto fail
 powershell -NoProfile -Command "Compress-Archive -Path dist\_src\revit-mcp -DestinationPath dist\RevitMcp-source.zip -Force" >> "%LOG%" 2>&1 || goto fail

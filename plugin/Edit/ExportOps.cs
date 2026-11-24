@@ -11,6 +11,10 @@ internal static class ExportOps
         ops["export_nwc"] = ExportNwc;
         ops["export_image"] = ExportImage;
         ops["export_schedule"] = ExportSchedule;
+        ops["export_dwf"] = ExportDwf;
+        ops["export_fbx"] = ExportFbx;
+        ops["export_gbxml"] = ExportGbxml;
+        ops["export_dgn"] = ExportDgn;
         ops["save"] = Save;
         ops["save_as"] = SaveAs;
     }
@@ -193,6 +197,144 @@ internal static class ExportOps
         var options = new ViewScheduleExportOptions { FieldDelimiter = "," };
         c.DeferOutput(folder, () => schedule.Export(folder, name, options));
         return new { file = IOPath.Combine(folder, name), schedule = schedule.Name, status = Queued };
+    }
+
+    /// <summary>Some exporters need a modifiable document: run inside a transaction that is rolled back (nothing kept).</summary>
+    private static bool Rolled(Document doc, string name, Func<bool> export)
+    {
+        using (var t = new Transaction(doc, name))
+        {
+            t.Start();
+            try { return export(); }
+            finally { t.RollBack(); }
+        }
+    }
+
+    private static ViewSet SetOf(IEnumerable<View> views)
+    {
+        var set = new ViewSet();
+        foreach (var v in views) set.Insert(v);
+        return set;
+    }
+
+    private static object ExportDwf(EditContext c, Obj p)
+    {
+        string folder = EditContext.Folder(p);
+        var views = Views(c, p);
+        bool merged = Flag(p, "merged", true);
+        if (merged)
+        {
+            string name = BaseName(c, p);
+            c.GuardOverwrite(p, folder, name + ".dwf");
+            c.DeferOutput(folder, () =>
+            {
+                if (!Rolled(c.Doc, "DWF export", () => c.Doc.Export(folder, name, SetOf(views), new DWFExportOptions { MergedViews = true })))
+                    throw new InvalidOperationException("DWF export failed.");
+            });
+            return new { folder, files = new[] { name + ".dwf" }, merged, views = views.Select(v => v.Name).ToList(), status = Queued };
+        }
+        var files = Named(c, p, views, folder, ".dwf");
+        c.DeferOutput(folder, () =>
+        {
+            var failed = files.Where(f => !Rolled(c.Doc, "DWF export", () => c.Doc.Export(folder, f.file, SetOf(new[] { f.view }), new DWFExportOptions()))).Select(f => f.file).ToList();
+            if (failed.Count > 0) throw new InvalidOperationException("DWF export failed for: " + string.Join(", ", failed));
+        });
+        return new { folder, files = files.Select(f => f.file + ".dwf").ToList(), merged, status = Queued };
+    }
+
+    private static object ExportFbx(EditContext c, Obj p)
+    {
+        string folder = EditContext.Folder(p), name = BaseName(c, p);
+        var view = Find.ViewOrActive(c.Doc, p) as View3D;
+        if (view == null || view.IsTemplate) throw new ArgumentException("export_fbx needs a 3D view ('view', or make a 3D view active).");
+        c.GuardOverwrite(p, folder, name + ".fbx");
+        c.DeferOutput(folder, () =>
+        {
+            if (!c.Doc.Export(folder, name, SetOf(new[] { view }), new FBXExportOptions()))
+                throw new InvalidOperationException("FBX export failed.");
+        });
+        return new { file = IOPath.Combine(folder, name + ".fbx"), view = view.Name, status = Queued };
+    }
+
+    private static object ExportGbxml(EditContext c, Obj p)
+    {
+        string folder = EditContext.Folder(p), name = BaseName(c, p);
+        c.GuardOverwrite(p, folder, name + ".xml");
+        c.DeferOutput(folder, () =>
+        {
+            bool created = false;
+            bool ok = Rolled(c.Doc, "gbXML export", () =>
+            {
+                // The exporter needs an energy analysis model from the building elements; the settings and the model made here
+                // are rolled back with the transaction.
+#if REVIT2024
+                var settings = Autodesk.Revit.DB.Analysis.EnergyDataSettings.GetFromDocument(c.Doc);
+#else
+                var settings = Autodesk.Revit.DB.Analysis.EnergyDataSettings.GetEnergyDataSettings(c.Doc);
+#endif
+                if (settings != null && settings.AnalysisType != Autodesk.Revit.DB.Analysis.AnalysisMode.BuildingElements)
+                    settings.AnalysisType = Autodesk.Revit.DB.Analysis.AnalysisMode.BuildingElements;
+                if (Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModel.GetMainEnergyAnalysisDetailModel(c.Doc) == null)
+                {
+#if REVIT2024
+                    Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModel.Create(c.Doc, new Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModelOptions
+                    {
+                        Tier = Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModelTier.Final,
+                        EnergyModelType = Autodesk.Revit.DB.Analysis.EnergyModelType.BuildingElement,
+                    });
+#else
+                    Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModel.Create(c.Doc);   // uses the mode in Energy Settings
+#endif
+                    created = true;
+                }
+                var options = new GBXMLExportOptions();
+#if REVIT2024
+                options.ExportEnergyModelType = ExportEnergyModelType.BuildingElement;
+#endif
+                c.Doc.Regenerate();
+                return c.Doc.Export(folder, name, options);
+            });
+            if (!ok) throw new InvalidOperationException("gbXML export failed; check Energy Settings (Analyze tab).");
+            if (created) c.Warn("gbXML: an energy analysis model was made for the export from the building elements and not kept.");
+        });
+        return new { file = IOPath.Combine(folder, name + ".xml"), status = Queued,
+                     note = "gbXML from the building elements, with the model's Energy Settings (Analyze tab); the model is not changed." };
+    }
+
+    private static object ExportDgn(EditContext c, Obj p)
+    {
+        string folder = EditContext.Folder(p);
+        var views = Views(c, p);
+        string setup = Str(p, "setup");
+        string seed = Has(p, "seed") ? EditContext.FullPath(NeedStr(p, "seed"), "seed") : null;
+        if (seed != null && !File.Exists(seed)) throw new ArgumentException($"DGN seed file '{seed}' does not exist.");
+        if (setup != null && !DGNExportOptions.GetPredefinedSetupNames(c.Doc).Contains(setup))
+            throw new ArgumentException($"No DGN export setup '{setup}'. Setups: {string.Join(", ", DGNExportOptions.GetPredefinedSetupNames(c.Doc))}.");
+        var files = Named(c, p, views, folder, ".dgn");
+        c.DeferOutput(folder, () =>
+        {
+            // Without a setup, Revit's defaults are tried first, then each DGN setup saved in the model (they carry a seed file).
+            var candidates = setup != null ? new List<string> { setup }
+                : new List<string> { null }.Concat(DGNExportOptions.GetPredefinedSetupNames(c.Doc)).ToList();
+            var failed = new List<string>();
+            foreach (var (view, file) in files)
+            {
+                string used = null; bool ok = false;
+                foreach (var name in candidates)
+                {
+                    var options = name != null ? DGNExportOptions.GetPredefinedOptions(c.Doc, name) : new DGNExportOptions();
+                    if (seed != null) options.SeedName = seed;
+                    if (Rolled(c.Doc, "DGN export", () => c.Doc.Export(folder, file, new List<ElementId> { view.Id }, options))) { ok = true; used = name; break; }
+                }
+                if (!ok) failed.Add(file);
+                else if (used != null && setup == null) c.Warn($"DGN '{file}': Revit's default options failed; exported with the model's setup '{used}'.");
+            }
+            if (failed.Count > 0)
+                throw new InvalidOperationException("DGN export failed for: " + string.Join(", ", failed) + ". DGN setups in this model: "
+                    + (DGNExportOptions.GetPredefinedSetupNames(c.Doc).Count == 0 ? "none (create one in Revit: File > Export > DGN > setup)" : string.Join(", ", DGNExportOptions.GetPredefinedSetupNames(c.Doc)))
+                    + (seed == null ? "; or give 'seed' (a .dgn seed file)." : "."));
+        });
+        return new { folder, files = files.Select(f => f.file + ".dgn").ToList(), setup, seed, status = Queued };
     }
 
     private static object Save(EditContext c, Obj p)

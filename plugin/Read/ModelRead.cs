@@ -56,24 +56,44 @@ internal static class ModelRead
         return o;
     }
 
-    public static object ListLevels(Rc rc, Obj p) => new
+    public static object ListLevels(Rc rc, Obj p)
     {
-        units = U.Name,
-        levels = Find.Levels(rc.Doc).Select(l => new { id = l.Id.Value, name = l.Name,
-            elevation = U.Out(l.ProjectElevation), displayElevation = U.Out(l.Elevation) }).ToList(),
-    };
+        var doc = LinkScope.DocOf(rc.Doc, p, out var link);
+        var o = new Obj
+        {
+            ["units"] = U.Name,
+            ["levels"] = Find.Levels(doc).Select(l =>
+            {
+                var row = new Obj { ["id"] = l.Id.Value, ["name"] = l.Name };
+                if (link == null) row["elevation"] = U.Out(l.ProjectElevation);
+                else
+                {
+                    row["elevation"] = U.Out(link.Z(l.ProjectElevation));   // in the reported coordinates
+                    row["linkElevation"] = U.Out(l.ProjectElevation);       // in the linked model
+                }
+                row["displayElevation"] = U.Out(l.Elevation);
+                return row;
+            }).ToList(),
+        };
+        if (link != null) o["link"] = link.Info();
+        return o;
+    }
 
     public static object ListGrids(Rc rc, Obj p)
     {
-        var grids = new FilteredElementCollector(rc.Doc).OfClass(typeof(Grid)).Cast<Grid>().OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
+        var doc = LinkScope.DocOf(rc.Doc, p, out var link);
+        var tf = link?.Tf;
+        var grids = new FilteredElementCollector(doc).OfClass(typeof(Grid)).Cast<Grid>().OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
             .Select(g =>
             {
                 var o = new Obj { ["id"] = g.Id.Value, ["name"] = g.Name };
                 var c = g.Curve;
-                if (c != null && c.IsBound) foreach (var kv in U.CurveOut(c)) o[kv.Key] = kv.Value;
+                if (c != null && c.IsBound) foreach (var kv in U.CurveOut(tf == null || tf.IsIdentity ? c : c.CreateTransformed(tf))) o[kv.Key] = kv.Value;
                 return o;
             });
-        return Describe.Page(p, grids, "grids", 500);
+        var page = (Obj)Describe.Page(p, grids, "grids", 500);
+        if (link != null) page["link"] = link.Info();
+        return page;
     }
 
     private static readonly HashSet<ViewType> HiddenViewTypes = new HashSet<ViewType>
@@ -123,9 +143,12 @@ internal static class ModelRead
 
     public static object CountByCategory(Rc rc, Obj p)
     {
-        var doc = rc.Doc;
+        var host = rc.Doc;
+        var doc = LinkScope.DocOf(host, p, out var link);
         bool all = Flag(p, "include_annotation", false);
-        var col = Has(p, "view") ? new FilteredElementCollector(doc, Find.ViewOf(doc, Ref(p, "view")).Id) : new FilteredElementCollector(doc);
+        var col = !Has(p, "view") ? new FilteredElementCollector(doc)
+            : link == null ? new FilteredElementCollector(doc, Find.ViewOf(doc, Ref(p, "view")).Id)
+            : new FilteredElementCollector(host, Find.ViewOf(host, Ref(p, "view")).Id, link.Instance.Id);
         var counts = new SortedDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         int cad = 0;
         foreach (Element e in col.WhereElementIsNotElementType())
@@ -137,18 +160,20 @@ internal static class ModelRead
             counts.TryGetValue(c.Name, out int n);
             counts[c.Name] = n + 1;
         }
-        return new
+        var o = new Obj
         {
-            total = counts.Values.Sum(),
-            categories = counts.OrderByDescending(kv => kv.Value).ToDictionary(kv => kv.Key, kv => (object)kv.Value),
-            cadFiles = cad,
-            note = all ? null : "Physical model elements only; CAD files are counted separately (list_links).",
+            ["total"] = counts.Values.Sum(),
+            ["categories"] = counts.OrderByDescending(kv => kv.Value).ToDictionary(kv => kv.Key, kv => (object)kv.Value),
+            ["cadFiles"] = cad,
+            ["note"] = all ? null : "Physical model elements only; CAD files are counted separately (list_links).",
         };
+        if (link != null) o["link"] = new Obj { ["id"] = link.Instance.Id.Value, ["name"] = link.Instance.Name, ["document"] = link.Doc.Title };
+        return o;
     }
 
     public static object ListTypes(Rc rc, Obj p)
     {
-        var doc = rc.Doc;
+        var doc = LinkScope.DocOf(rc.Doc, p, out var link);
         var cat = Find.Cat(doc, NeedStr(p, "category"));
         var used = new Dictionary<long, int>();
         foreach (Element e in new FilteredElementCollector(doc).OfCategory(cat).WhereElementIsNotElementType())
@@ -164,7 +189,9 @@ internal static class ModelRead
                 id = t.Id.Value, family = t.FamilyName, type = t.Name, kind = t.GetType().Name,
                 instances = used.TryGetValue(t.Id.Value, out int n) ? n : 0,
             });
-        return Describe.Page(p, types, "types", 300);
+        var page = (Obj)Describe.Page(p, types, "types", 300);
+        if (link != null) page["link"] = new Obj { ["id"] = link.Instance.Id.Value, ["name"] = link.Instance.Name, ["document"] = link.Doc.Title };
+        return page;
     }
 
     public static object ListMaterials(Rc rc, Obj p)

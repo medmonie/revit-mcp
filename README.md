@@ -1,6 +1,6 @@
 # Revit MCP bridge
 
-**Version 0.14 · Autodesk Revit 2027 and 2024 · Windows**
+**Version 0.17 · Autodesk Revit 2027 and 2024 · Windows**
 
 Lets Claude work in the model that is open in Revit on this computer: read it, measure it, check it, and, after you allow
 it once per Revit session, build and fix it. One tool covers modelling, editing, quantity surveying, model QA, CAD to
@@ -41,7 +41,10 @@ the package includes the MCP server as one exe, so no Python, no .NET SDK and no
 
 1. Close Revit.
 2. Download **`RevitMcp.zip`** (from this repository's Releases, or built with `build_package.bat`), unzip it and
-   double-click **`install.bat`**. It
+   double-click **`install.bat`** as the Windows user who runs Revit. Everything goes into that user's profile, so
+   do not use *Run as administrator* (it is not needed): an elevated window running under another account (e.g.
+   an admin's credentials on a domain controller) would install into that account. `install.bat` stops when its
+   account is not the desktop user; `install.bat /this_user` installs for the running account on purpose. It
    - installs the add-in for each Revit it finds: `%APPDATA%\Autodesk\Revit\Addins\<year>\` (`RevitMcpBridge.addin` +
      `RevitMcpBridge\RevitMcpBridge.dll`), and clears the "downloaded from the internet" mark that stops Revit 2024
      loading a DLL from a zip;
@@ -52,7 +55,7 @@ the package includes the MCP server as one exe, so no Python, no .NET SDK and no
 3. Fully quit Claude Desktop (tray icon > Quit) and start it again.
 4. Start Revit. The first time it asks whether to load the unsigned add-in: choose **Always Load**. A panel
    **Claude MCP** appears on the **Add-Ins** tab.
-5. Open a model and ask: *"Ping Revit and tell me which model is open."* The answer shows the add-in version (0.14.0),
+5. Open a model and ask: *"Ping Revit and tell me which model is open."* The answer shows the add-in version (0.17.0),
    the Revit version, and the active model's `documentId`.
 
 **ChatGPT desktop app.** Settings > MCP servers > Add server. Name it `revit`, choose STDIO, and use the server path
@@ -143,6 +146,7 @@ Open the model in Revit, then ask Claude in plain language. Claude picks the act
 
 | Rule | What it means for you |
 |---|---|
+| **No design** | The bridge models, reads, checks and documents. It never sizes members or reinforcement and applies no design code: engineering values come from you. |
 | **Millimetres by default** | Say "in metres" and Claude sends `units: "m"`. Results are always m, m2, m3, kg and t. |
 | **Model transaction** | Model operations use one transaction and one Undo step. Save, export, view activation, and family reloads have separate `postCommit` outcomes. |
 | **Dry run first** | Ask for a dry run before anything large: the batch is executed and rolled back, so you see counts, errors and warnings with no change. Purge previews list first-pass candidates without deleting. A purge-only preview opens no transaction. Exports, saves and family changes are skipped in a dry run. |
@@ -154,8 +158,16 @@ Open the model in Revit, then ask Claude in plain language. Claude picks the act
 
 ### Several Revits at once
 
-With Revit 2024 and 2027 both open: *"list the open Revits"* (`list_revit_sessions`), then *"use Revit 2027"*
-(`select_revit`). Every following call goes to that one. **MCP Status** in a Revit window does the same.
+Two or more Revit windows (2024 and 2027, or two of the same year) can run at once:
+
+- With **one** Revit open, Claude uses it, whatever was open or crashed before.
+- With **several** open, reads go to the *default* one: the first Revit started, or the one where **MCP Status** was
+  last pressed. Opening a second Revit does **not** move Claude to it. `ping` then lists the other sessions.
+- **Edits are refused** while several are open and none is chosen: *"list the open Revits"* (`list_revit_sessions`
+  shows each one's model), then *"use the Revit with model X"* (`select_revit` with its pid). Every following call
+  goes to that one; `select_revit` with pid `auto` goes back to automatic choice.
+- Closing the default Revit makes another open one the default; a crashed Revit's leftover files are ignored and
+  removed by the next Revit that starts.
 
 **Edit targeting and retries.** The server captures the active document in the selected process before sending an edit.
 Revit checks the document again when the edit executes. Supply the `document_id` from an earlier `ping` to target the
@@ -196,6 +208,19 @@ Each workflow lists what to ask, what runs, and what to check. Run the edit step
 | "Which beam types are loaded and how many of each?" | `list_types` |
 | "Show me Revit's warnings grouped by message." | `list_warnings` |
 | "What is inside family KTR-S-STL-BU?" | `family_inspect`: parameters, solids with their material and linked parameter, nested families |
+
+### 4.1a Read a linked Revit model
+
+| Ask | Runs |
+|---|---|
+| "Which Revit models are linked, and where are they placed?" | `list_links`: file, path, loaded, document, transform (origin and plan rotation) |
+| "How many columns and walls are in the architectural link?" | `count_by_category` with `link` |
+| "List the link's columns on Level 2 with their Mark, in our coordinates." | `get_elements` with `link`, `category`, `level` (the link's level name), `params`; locations in host coordinates |
+| "Compare the link's grids and levels with ours." | `list_grids` and `list_levels`, once without and once with `link` |
+| "Only the link's elements visible in plan FIRST FLOOR." | `get_elements` with `link` and `view` (a host view) |
+
+Check: ids, types and levels in the result belong to the linked model; `coordinates: link` gives the linked model's own
+coordinates instead of host coordinates. A link must be loaded to be read.
 
 ### 4.2 Quantities and the QS workbook
 
@@ -302,18 +327,28 @@ a placed sample and reshapes it, `legend_create` duplicates an existing legend a
 | "Put the three section views and the column schedule on S-301." | `sheet_layout` (rows inside the sheet area; schedules too) |
 | "Title-block fields (Drawn by, Checked by, Status) for all sheets from Excel." | `params_to_excel` / `params_from_excel` with category `sheets` (or `title_blocks`) |
 | "What templates, filters, revisions and scope boxes are in the model?" | `list_documentation` |
+| "Column schedule: only GF, sorted by type with a header per type, volume totalled in m3 with 2 decimals." | `schedule_set` (filters, sort / group, fields format) |
+| "Dimension these walls along their 30-degree direction." | `dimension_rotated` (angle 30) |
+| "Angle between grid A and grid 1R." | `dimension_angular` |
+| "Radius of the curved grid and the curved beam." (Revit 2027) | `dimension_radial` |
+| "Spot coordinates on the corner columns." | `spot_coordinate` |
 
 ### 4.9 Reinforcement
 
 | Ask | Runs |
 |---|---|
-| "Reinforce these columns: 4 x 3 bars T20, ties T10 @ 150, cover 40." | `rebar_column` (bars_x 4, bars_y 3); laps into the column above, feet on the footing, ties @ 100 at the ends |
-| "Roof columns: bend the bars at the top, no closer ties." | `rebar_column` (top bend, end_zone 0) |
-| "Beams on FF: 3 T16 bottom, 2 T12 top, stirrups T8 @ 150." | `rebar_beam`: anchored into supports (40 Ø, bent if needed), stirrups @ 100 over 2h at the ends |
-| "Anchorage 50 Ø, laps 60 Ø, stirrups @ 75 at the ends." | `rebar_beam` (anchorage_d 50, lap_d 60, end_spacing 75) |
-| "Footings F1: T16 @ 200 bottom both ways, top mesh T12 @ 250, bottom bars turned up." | `rebar_footing` (end_bends) |
-| "Slab: T12 @ 200 top and bottom both ways." | `rebar_area` |
+| "Reinforce these columns: 4 x 3 bars T20, ties T10 @ 150, cover 40, top auto, lap 50 Ø, top bend 300, bottom on the footing with 300 feet, footing cover 75." | `rebar_column` (bars_x 4, bars_y 3, top auto, lap_d 50, bend_leg 300, bottom footing, foot_length 300, footing_cover 75) |
+| "Same, with ties @ 100 over 600 at each end and T10 @ 150 inside the footing." | add end_zone 600, end_spacing 100, starter_tie_spacing 150 |
+| "Beams on FF: 3 T16 bottom, 2 T12 top, stirrups T8 @ 150, cover 40, anchorage 40 Ø with 250 bends, laps 50 Ø, 12 m bars." | `rebar_beam` (anchorage_d 40, bend_leg 250, lap_d 50, stock_length 12000) |
+| "Footings F1: T16 @ 200 bottom both ways, cover 75, top mesh T12 @ 250, bottom bars turned up." | `rebar_footing` (top, top_bar, top_spacing, end_bends) |
+| "Slab: T12 @ 200 top and bottom both ways." | `rebar_area` (layers both) |
 | "BBS of everything on the GF to Excel." | `bbs_report` |
+
+**No design.** The reinforcement operations place the reinforcement you specify; they do not design it. Every
+engineering value (counts, spacings, cover, anchorage, laps, bend lengths, end zones, stock length) must be given, and
+nothing is taken from a code. A missing value stops the operation with a list of what to give. Where the geometry
+cannot take a value (an anchorage that does not fit straight, a foot or bend limited by the member), the result says so,
+for you to check against your design.
 
 Bar types are named or given by diameter (16 or "T16" finds the 16 mm type). Sizes come from each element's own
 geometry; cover is to the outer face of the outermost bar. Review the bars in a 3D view before issuing a schedule.
@@ -327,6 +362,12 @@ geometry; cover is to the outer face of the outermost bar. Review the bars in a 
 | "Joists at 600 mm in this bay, spanning north-south." | `beam_system_create` |
 | "X-braces between grids 3 and 4 from GF to L1." | `brace_create` |
 | "Piles under the pile caps." | `footing_create` / `family_place` with the pile and pile-cap families |
+| "Flip these doors / this wall." | `flip` (facing, hand, work plane, wall orientation) |
+| "Don't let this beam join at its end; extend it 150 mm past the start." | `end_join` (allow false; extension) |
+| "Put the embed plate family on the side face of beam 1723276 at these points." | `family_place_hosted` (host face, or a level / reference plane) |
+| "Group these footings and place the group at 3 more points; ungroup the old one." | `group_create`, `group_place`, `ungroup` (`list_groups`) |
+| "Make an assembly of this precast beam and its bars, with 3D, front and section views and a parts list." | `assembly_create`, then `assembly_views` (`list_assemblies`) |
+| "What exactly is this element's geometry: faces, volume, original shape?" | `get_geometry` (also inside a link) |
 
 ### 4.11 Model management
 
@@ -340,12 +381,17 @@ geometry; cover is to the outer face of the outermost bar. Review the bars in a 
 | "Create worksets S-Columns and S-Framing and move the columns." | `workset_create`, `workset_set` (workshared models only) |
 | "Who owns these elements?" | `list_worksets` with `ids` |
 | "Mark these walls as demolished in Existing." | `phase_set` |
+| "Global parameter 'Slab Cover' = 25 mm, driving the cover of these slabs." | `global_parameter_create`, `global_parameter_associate` (`list_global_parameters`) |
+| "What are the structural and thermal properties of C30?" | `get_material` |
+| "Set C30's density to 2500 kg/m3 and E to 27000 MPa." | `material_asset_set` (a shared asset is copied for this material unless `change_shared`) |
+| "Which types have no keynote or assembly code?" | `list_keynotes` |
+| "Export the GA sheets to DWF and DGN, the 3D view to FBX, the model to gbXML." | `export_dwf`, `export_dgn`, `export_fbx`, `export_gbxml` |
 
 ---
 
 ## 5. Feature reference
 
-One tool, `revit(action, params)`: 39 read actions, 9 server actions and 97 edit operations inside the single `edit`
+One tool, `revit(action, params)`: 45 read actions, 9 server actions and 118 edit operations inside the single `edit`
 action. Parameters for every one: [docs/ACTIONS.md](docs/ACTIONS.md).
 
 ### 5.1 Read actions (never change the model)
@@ -354,17 +400,17 @@ action. Parameters for every one: [docs/ACTIONS.md](docs/ACTIONS.md).
 |---|---|---|
 | Model | `ping` | Bridge and Revit version, active model and view, edit permission |
 | | `get_project_info` | Title, path, workshared / read-only, project information, phases, structural counts |
-| | `list_levels`, `list_grids` | Levels by elevation; grids with end points (arc grids with mid point and radius) |
+| | `list_levels`, `list_grids` | Levels by elevation; grids with end points (arc grids with mid point and radius); also of a link |
 | | `list_views`, `list_sheets` | Views by type, level, scale; sheets with their views |
-| | `count_by_category` | Elements per category, largest first |
-| | `list_types` | Types of a category with instance counts (the names edit operations use) |
+| | `count_by_category` | Elements per category, largest first; also inside a link |
+| | `list_types` | Types of a category with instance counts (the names edit operations use); also of a link |
 | | `list_materials` | Materials and their class |
 | | `list_warnings` | Revit's warnings with the elements involved, counted per message |
-| Elements | `get_elements` | Elements by category, id, type, level or view: location and the parameters you name |
-| | `get_element` | One element in full: every parameter, location, bounding box, host |
+| Elements | `get_elements` | Elements by category, id, type, level or view: location and the parameters you name; with `link`, a linked model's elements in host coordinates |
+| | `get_element` | One element in full: every parameter, location, bounding box, host; also inside a link |
 | | `get_selection` | Your current selection |
 | | `show_elements` | Selects and zooms to elements (changes the view only) |
-| Links and CAD | `list_links` | Revit links and linked / imported CAD files |
+| Links and CAD | `list_links` | Revit links (path, loaded, transform) and linked / imported CAD files |
 | | `get_cad_geometry` | Lines, arcs, circles, polylines of a DWG / DXF by layer, in model coordinates |
 | | `cad_columns` | Column outlines on a layer with size, rotation and matched type (what `columns_from_cad` would place) |
 | Quantities | `takeoff` | Count, length, area, volume, grouped by type, level or both |
@@ -383,6 +429,11 @@ action. Parameters for every one: [docs/ACTIONS.md](docs/ACTIONS.md).
 | | `list_phases` | Phases, phase filters, design option sets and options |
 | Detailing and documentation | `list_documentation` | View templates, filters, revisions, scope boxes, title blocks |
 | | `list_detailing` | Line styles, filled region types, detail components, detail groups, drafting views and legends (this model or another open one) |
+| Groups, assemblies and geometry | `list_groups`, `list_assemblies` | Group types with instances and members; assemblies with members and their views |
+| | `get_geometry` | Raw solids, faces, curves of one element (as modelled or original; also in a link) |
+| Standards and data | `list_global_parameters` | Global parameters with value, formula, reporting, driven elements |
+| | `get_material` | Material identity, graphics, structural / thermal / appearance assets and who shares them |
+| | `list_keynotes` | Keynote and assembly code files, and each type's keynote / assembly code |
 | Meta | `family_inspect` | Inside a loaded family: parameters, solids with material and link, nested families |
 | | `get_edit_permission` | Whether editing is allowed now |
 | | `list_actions`, `describe_api` | What the installed add-in supports; Revit API members (developer aid) |
@@ -416,7 +467,7 @@ action. Parameters for every one: [docs/ACTIONS.md](docs/ACTIONS.md).
 | | `view_template_create`, `view_template_apply` | View templates |
 | | `dimension_elements`, `spot_elevation` | Chain dimensions through element faces and grids; spot elevations on top faces |
 | | `revision_create`, `revision_cloud_create`, `sheet_layout` | Revisions on sheets, clouds; several views and schedules on one sheet |
-| Reinforcement | `rebar_column`, `rebar_beam`, `rebar_footing`, `rebar_area` | Column bars (laps, top bends, footing feet) and zoned ties; beam bars anchored into supports, lapped past stock length, zoned stirrups; footing meshes with optional U bars; slab area reinforcement. Anchorage and laps are multiples of Ø you set (defaults 40 Ø / 50 Ø), not code-calculated |
+| Reinforcement | `rebar_column`, `rebar_beam`, `rebar_footing`, `rebar_area` | Column bars (laps, top bends, footing feet) and zoned ties; beam bars anchored into supports, lapped past stock length, zoned stirrups; footing meshes with optional U bars; slab area reinforcement. All values from the engineer (no defaults, no code checks) |
 | From CAD | `columns_from_cad` | Columns from outlines, typed by size, rotated, missing sizes created |
 | | `grids_from_cad` | Grids from grid lines |
 | | `beams_from_cad`, `walls_from_cad` | Beams / walls from pairs of edge lines or concentric arcs, typed by width |
@@ -427,14 +478,22 @@ action. Parameters for every one: [docs/ACTIONS.md](docs/ACTIONS.md).
 | | `join`, `unjoin`, `switch_join_order` | Geometry joins for chosen pairs |
 | | `join_overlaps` | Join measured pairs when both elements meet the filters. Coincidence, containment and failed measurements go to review. |
 | | `family_load` | Load an .rfa file |
+| | `flip`, `end_join` | Flip facing / hand / work plane / wall; allow or disallow end joins, framing end extensions |
+| | `family_place_hosted` | Face-based families on a host face; work-plane-based families on a level or reference plane |
+| Groups and assemblies | `group_create`, `group_place`, `ungroup` | Model / detail groups; place model groups at points; ungroup |
+| | `assembly_create`, `assembly_views` | Assemblies; 3D, elevation / section views, parts list, take-off and sheet of an assembly |
+| Standards and data | `global_parameter_create`, `global_parameter_set`, `global_parameter_associate` | Global parameters: create, value or formula, drive element / type parameters |
+| | `material_asset_set` | Structural / thermal asset values and appearance colour of a material |
 | Materials | `fix_materials` | Materials by rule, on the type where safe, else per element, verified |
 | | `family_material_set` | One material on every solid of chosen families |
 | | `family_material_link` | Link the families' solids to Structural Material |
 | Model management | `parameter_add`, `parameter_remove`, `purge`, `standards_copy`, `workset_create`, `workset_set`, `phase_set` | Shared parameters from a file, bound to categories; remove parameters; purge unused in passes; copy templates, filters, types, patterns, materials, title blocks, line styles from another open model; worksets; phases |
-| Warnings | `fix_warnings` | Fix warnings that have one safe fix; list the rest |
+| Warnings | `fix_warnings` | Fix warnings that have one safe fix (unjoin; on request delete identical instances or overlapped lines); list the rest |
 | Views and annotation | `view_plan_create`, `view_3d_create`, `section_create`, `elevation_create`, `view_activate` | Views (sections along a line, a grid or through an element) |
 | | `sheet_create`, `viewport_place`, `schedule_create` | Sheets, viewports, schedules |
 | | `tag_elements`, `dimension_grids`, `text_note_create`, `model_lines_create` | Tags, grid chain dimensions, notes, model lines and arcs |
+| | `schedule_set` | Schedule filters, sorting / grouping, itemize, totals, headings, hidden fields, number formats |
+| | `dimension_rotated`, `dimension_angular`, `dimension_radial`, `spot_coordinate` | Dimensions along any direction; angles; radius / diameter (2027); spot coordinates |
 | Drafting and detailing | `drafting_view_create`, `callout_create`, `view_duplicate`, `view_set` | Drafting views; callouts; duplicates (plain, with detailing, dependent); scale, detail level, crop, view range |
 | | `detail_lines_create`, `region_create` | Lines, arcs and polylines with a line style; filled and masking regions (polygons, holes, circles) |
 | | `detail_component_place`, `detail_group_place` | Detail components at points or along lines; detail groups (active view) |
@@ -445,6 +504,7 @@ action. Parameters for every one: [docs/ACTIONS.md](docs/ACTIONS.md).
 | | `shaft_create` | Shaft through every slab between two levels |
 | Links | `cad_link`, `revit_link` | Link or import DWG / DXF; link a Revit model |
 | Export and save | `export_dwg`, `export_pdf`, `export_ifc`, `export_nwc`, `export_image`, `export_schedule` | Views and sheet sets by number pattern with file names from a template; IFC, NWC, PNG, CSV |
+| | `export_dwf`, `export_dgn`, `export_fbx`, `export_gbxml` | DWF (merged or per view), DGN per view, FBX of a 3D view, gbXML |
 | | `save`, `save_as` | Save; save as (not for workshared models) |
 
 ---
@@ -470,7 +530,9 @@ Compare the result with the drawing before building on it: `cad_columns` and `pr
 | Not possible (yet) | What to do instead |
 |---|---|
 | Reinforce curved or sloped beams, walls, irregular members; path reinforcement; rebar couplers | Model them in Revit; `rebar_list` / `bbs_report` include every bar. |
-| Dimensions of rotated elements, angular or radial dimensions | `dimension_elements` covers faces square to x and y (plus grids); do the rest in Revit. |
+| Radial / diameter dimensions in Revit 2024; spot slopes | The 2024 API has no call to create radial dimensions (`dimension_radial` works in 2027); no Revit version can create spot slopes through the API. Place them in Revit. |
+| DGN without a DGN setup or seed file; gbXML of a model without a usable energy model | `export_dgn` needs a DGN setup saved in the model or `seed`; `export_gbxml` failed live on a bare test project (no compatible energy analysis model). Set them up in Revit, or export from Revit. |
+| Appearance assets other than Generic, or properties beyond the render colour | `material_asset_set` changes the Generic diffuse colour; edit other appearance properties in the Material Browser. |
 | Repeating details or legends from nothing | Revit's API has no create method. Legends: `legend_create` duplicates an existing one (copy one in first if the model has none). Repeating details: `repeating_detail_place` copies a placed sample (this model or another open one), or `detail_component_place` with `along` repeats a component. |
 | Draw new geometry in the Family Editor | Families can be inspected, loaded, have types duplicated and their solids' materials set or linked. |
 | Read text, dimensions or block attributes in a linked DWG | Revit does not expose them; give names (grids) or types (`types`) in the request. |
@@ -510,7 +572,8 @@ Also good to know:
 | Symptom | Cause and fix |
 |---|---|
 | "Revit is not reachable" | Revit is not running, or the add-in did not load. Look for **Add-Ins > Claude MCP**. If it is missing, check `%APPDATA%\Autodesk\Revit\Addins\<year>\RevitMcpBridge.addin` and restart Revit; answer the load question with *Always Load*. |
-| "Could not reach Revit on port ..." | That Revit was closed, or two are open. Ask "use Revit 2027" or press **MCP Status** in the one you want. |
+| "Could not reach Revit on port ..." | That Revit was closed, or is frozen. With another Revit open, ask "use the other Revit" (`select_revit`) or press **MCP Status** in it. |
+| "2 Revit sessions are open ... Edits are refused" | Several Revits are open. Ask Claude to list them and use the one with your model (`select_revit`). |
 | "No model is open in Revit" | Open a project. |
 | "Revit did not become available within 30 s" | A command, dialog or sketch is active in Revit. Finish or cancel it (Esc) and ask again. |
 | "Unknown action" / "Unknown edit operation" | Claude is still running the old server. Restart Claude completely. |

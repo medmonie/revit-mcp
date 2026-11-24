@@ -53,13 +53,17 @@ def _sessions() -> list[dict[str, Any]]:
     from bridge_client import sessions_dir
     out = []
     folder = sessions_dir()
+    try:
+        default_pid = int(json.loads(bridge_client.bridge_file().read_text(encoding="utf-8"))["pid"])
+    except (OSError, ValueError, KeyError, TypeError):
+        default_pid = None
     for f in sorted(folder.glob("*.json")) if folder.exists() else []:
         try:
             info = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         entry = {"pid": info.get("pid"), "revit": info.get("revit"), "startedUtc": info.get("startedUtc"),
-                 "selected": bridge_client.selected() == f}
+                 "selected": bridge_client.selected() == f, "default": info.get("pid") == default_pid}
         try:
             ping = call("ping", connection=f, timeout=5)
             entry.update(reachable=True, activeModel=ping.get("activeModel"), editingAllowed=ping.get("editingAllowed"))
@@ -74,7 +78,8 @@ def _select(params: dict[str, Any]) -> dict[str, Any]:
     pid, revit = params.get("pid"), params.get("revit")
     if str(pid).lower() == "auto" or (pid is None and revit is None):
         bridge_client.select(None)
-        return {"selected": "auto", "note": "Calls go to the most recently started Revit (or the one where MCP Status was pressed)."}
+        return {"selected": "auto", "note": "Calls go to the only open Revit; with several open, reads go to the default one "
+                                            "(first started, or where MCP Status was pressed) and edits need select_revit."}
     live = [s for s in _sessions() if s.get("reachable")]
     if pid is not None:
         try:

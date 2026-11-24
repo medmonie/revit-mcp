@@ -19,6 +19,15 @@ if not exist "revit-mcp-server.exe" (
   exit /b 1
 )
 
+rem The files go into the profile of the account running this script; stop when that is not the desktop user
+rem (e.g. "Run as administrator" with another account's credentials). install.bat /this_user skips the check.
+echo Installing for %USERDOMAIN%\%USERNAME%  (%USERPROFILE%)
+echo ACCOUNT %USERDOMAIN%\%USERNAME% >> "%LOG%"
+if /i "%~1"=="/this_user" goto :user_ok
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0check_user.ps1" >> "%LOG%" 2>&1
+if errorlevel 2 goto :other_user
+:user_ok
+
 rem Files from a downloaded zip carry the internet mark; Revit 2024 refuses to load such a DLL. Remove the mark.
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -LiteralPath '%~dp0' -Recurse -File | Unblock-File" >> "%LOG%" 2>&1
 
@@ -58,6 +67,7 @@ echo RESULT=OK >> "%LOG%"
 
 echo.
 echo Installed.
+echo   For user: %USERDOMAIN%\%USERNAME%
 echo   Add-in for Revit:%INSTALLED%
 echo   Server: %EXE%
 echo.
@@ -68,6 +78,16 @@ echo   3. Open a model and ask Claude: "Ping Revit and tell me which model is op
 echo ChatGPT desktop: Settings ^> MCP servers ^> Add server, name revit, STDIO, command = the server path above.
 pause
 exit /b 0
+
+:other_user
+echo.
+echo This window runs as %USERDOMAIN%\%USERNAME%, but the desktop belongs to another user - see install_result.txt.
+echo The add-in and the server would go into %USERPROFILE%, where Revit for the desktop user does not look.
+echo Close this window and double-click install.bat as the user who runs Revit. It needs no administrator rights,
+echo so do not use Run as administrator. To install for %USERNAME% on purpose, run:  install.bat /this_user
+echo RESULT=STOPPED: running as another account than the desktop user >> "%LOG%"
+pause
+exit /b 1
 
 :addin
 set "Y=%1"

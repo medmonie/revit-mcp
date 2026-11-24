@@ -1,5 +1,92 @@
 # Changelog
 
+## 0.17.0 - 2026-11-24
+
+Roadmap phases 8 (modify and documentation depth) and 9 (standards and data). No design: every value placed is given.
+
+Phase 8
+- flip: facing, hand or work plane of family instances (as the family allows); wall orientation.
+- end_join: allow / disallow joins at the start / end of walls and framing; framing end extension (the length given).
+- family_place_hosted: face-based families on a host face (nearest, top, bottom or side), work-plane-based families on a
+  level or named reference plane, with a reference direction.
+- Groups: group_create, group_place (model groups at points), ungroup; read list_groups.
+- Assemblies: assembly_create, assembly_views (3D, elevations / detail sections, parts list, material take-off, sheet);
+  read list_assemblies.
+- schedule_set: filters (14 operators, numbers in request units / m2 / m3 / degrees), sorting / grouping with headers,
+  footers, counts and blank lines, itemize, grand total, title / headers, and per field heading, hidden, alignment,
+  totals, unit and decimals.
+- Dimensions: dimension_rotated (chain along any plan direction), dimension_angular (two grids / reference planes /
+  lines), dimension_radial (radius or diameter; Revit 2027 only, the 2024 API has no call), spot_coordinate.
+  Spot slopes cannot be created through any Revit API.
+- fix_warnings: new kinds duplicate_instances (copies deleted, lowest id kept) and overlapping_lines (a line within
+  another deleted); both only when named in kinds, the default stays joined_disjoint.
+- get_geometry: solids (volume, area, centroid, box), faces (kind, area, normal / axis, radius), curves, meshes; as
+  modelled or original; also inside a Revit link.
+
+Phase 9
+- Global parameters: list_global_parameters, global_parameter_create (length, area, volume, angle, number, integer,
+  text, yes_no, material; value or formula), global_parameter_set, global_parameter_associate (drive or clear an element
+  / type parameter).
+- Materials: get_material (identity, graphics, structural asset in kg/m3 / MPa / 1/C, thermal asset, appearance colour,
+  materials sharing each asset); material_asset_set (structural / thermal values, render and shading colour,
+  transparency; an asset shared with other materials is copied into a new asset for this material unless change_shared).
+- list_keynotes: keynote file and entries, assembly code table, keynote / assembly code per type in use, missing counts.
+- Export: export_dwf (merged or per view), export_dgn (per view; Revit's defaults, then the model's DGN setups),
+  export_fbx (3D view), export_gbxml (from the building elements; the energy model it needs is made and rolled back).
+  DWF, DGN and gbXML run inside a rolled-back transaction (Revit needs a modifiable document for them).
+- Several Revit sessions: opening a second Revit no longer moves Claude to it (bridge.json now names the first one
+  started, or the one where MCP Status was pressed); with several open, reads go to that default and `ping` lists the
+  others, and edits are refused until `select_revit` picks one. With one Revit open it is used whatever bridge.json
+  says, so closing the default (it hands over to another open Revit) or a crash no longer leaves "Revit is not
+  reachable" while a Revit is open. Session files of crashed Revits are removed by the next Revit that starts.
+  `list_revit_sessions` marks the default.
+- Installer: install.bat / uninstall.bat show the account they install for and stop when it is not the desktop user
+  (an elevated "Run as administrator" window under another account, e.g. on a domain controller, used to install
+  into that account's profile); /this_user overrides. New package\check_user.ps1.
+- Not working live yet: export_dgn without a DGN setup in the model (give `seed`), export_gbxml on a model without a
+  compatible energy analysis model.
+- Shared fix: spot_elevation and spot_coordinate place the spot on a point of the face itself (the centre of the
+  face's box could fall outside an L-shaped or holed slab: "Spot Dimension does not lie on its reference").
+
+## 0.16.0 - 2026-11-24
+
+Roadmap phase 6, first item: read elements inside linked Revit models. Reads only; no design.
+
+- New `link` parameter (instance id, link type id or file name from list_links) on get_elements, get_element,
+  count_by_category, list_types, list_levels and list_grids: the action reads the loaded link's document. Ids, types and
+  levels in the result are the linked model's own.
+- New `coordinates` parameter with link: `host` (default) applies the link's total transform to points, curves and
+  rotations; `link` reports the linked model's own internal coordinates. Boxes in host coordinates are the axis-aligned
+  box of the transformed corners. Every result with link carries a `link` block (id, name, document, coordinates,
+  transform) so the convention is always stated.
+- get_elements / count_by_category with link and `view`: the link's elements visible in that host view (Revit's
+  host-view link collector).
+- list_levels with link: `elevation` in the reported coordinates and `linkElevation` in the linked model.
+- list_links: per Revit link also `path`, `attachment`, `nested`, `loaded`, `document`, `workshared`, and `transform`
+  (origin, plan rotation, tilted / mirrored flags).
+- A link that is not loaded, an unknown name, or a file placed more than once gives a message listing what to give.
+- New `plugin/Core/LinkScope.cs`; `Describe.Location` / `Describe.Box` take an optional transform (host results
+  unchanged).
+
+## 0.15.0 - 2026-11-24
+
+No design in the bridge: reinforcement and joist spacing take the engineer's values only.
+
+- rebar_column, rebar_beam, rebar_footing, rebar_area: removed every built-in engineering default (bar counts, spacings,
+  cover, 40 Ø anchorage, 50 Ø laps, 12 Ø / 150 mm bend legs, 200 mm feet, end zones of max(long side, H/6, 450) and 2 x
+  depth, 100 mm end spacing, 150 mm starter ties, 12 m stock length). A missing value stops the operation with the list
+  of values to give.
+- New parameters: rebar_column bend_leg, foot_length, starter_tie_spacing; rebar_beam bend_leg. top_bar is required.
+- End zones are applied only when end_zone is given; starter ties only with starter_tie_spacing; bars are split with
+  laps only when stock_length is given. top / bottom "auto" stays available as an explicit choice (a geometric rule).
+- A beam anchorage that does not fit straight goes to the far face with the given bend_leg and is reported for checking;
+  it no longer lengthens the bend to make up the anchorage.
+- beam_system_create: spacing is required.
+- The tool description now states the no-design rule (NO_DESIGN_NOTE).
+- From the live test on Task 04 (dry runs): values that depend on top / bottom / ends are asked for only once that choice
+  is given; a bend or U-bar leg shortened by the member size is now reported (column top bend, beam bend, footing U
+  bars); a missing top_bar for a top mesh joins the list of missing values.
+
 ## 0.14.0 - 2026-11-23
 
 Installer package, as in the Civil 3D bridge: nothing to install by hand on the user's PC.

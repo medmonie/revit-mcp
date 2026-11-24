@@ -6,6 +6,9 @@ namespace RevitMcpBridge;
 /// Reinforcement: bars and ties in columns, bars and stirrups in straight beams, bottom / top meshes in isolated
 /// footings, and area reinforcement in slabs. Sizes come from the element's own geometry in its local axes; cover
 /// is to the outer face of the outermost bar (ties / stirrups included).
+/// No design: every engineering value (bar counts, spacings, cover, anchorage, laps, bend legs, end zones, stock length)
+/// is input from the engineer, with no default. The operations only fit those values to the modelled geometry and
+/// report where the geometry could not take them.
 /// </summary>
 internal static class RebarOps
 {
@@ -124,11 +127,73 @@ internal static class RebarOps
 
     // ---------------------------------------------------------------- detailing
 
-    /// <summary>A detailing length given as a multiple of the bar diameter ("anchorage_d": 40 means 40 x the diameter).</summary>
-    private static double Times(Obj p, string name, double dflt, RebarBarType t) => (Dbl(p, name) ?? dflt) * Dia(t);
+    /// <summary>
+    /// Reinforcement values are design input: none has a default. Collects every missing value so that one error
+    /// names them all.
+    /// </summary>
+    private sealed class Need
+    {
+        private readonly Obj _p;
+        private readonly List<string> _missing = new();
+        public Need(Obj p) { _p = p; }
 
-    /// <summary>The leg of a 90 degree bend: 12 x the diameter, at least 150 mm.</summary>
-    private static double Leg(RebarBarType t) => Math.Max(12 * Dia(t), U.Mm(150));
+        /// <summary>A required length in request units, returned in feet.</summary>
+        public double Len(string name)
+        {
+            if (Dbl(_p, name) is double d)
+            {
+                if (d < 0) throw new ArgumentException($"'{name}' must not be negative.");
+                return U.In(d);
+            }
+            _missing.Add(name);
+            return 0;
+        }
+
+        /// <summary>An optional length (a feature switched on only when given), in feet.</summary>
+        public double? OptLen(string name) => Dbl(_p, name) is double d ? Math.Max(0, U.In(d)) : (double?)null;
+
+        /// <summary>A required multiple of the bar diameter ("anchorage_d": 40 means 40 x the diameter).</summary>
+        public double Factor(string name)
+        {
+            if (Dbl(_p, name) is double d)
+            {
+                if (d < 0) throw new ArgumentException($"'{name}' must not be negative.");
+                return d;
+            }
+            _missing.Add(name);
+            return 0;
+        }
+
+        public int Count(string name, int min, int max)
+        {
+            if (Dbl(_p, name) is not double d) { _missing.Add(name); return min; }
+            int n = (int)Math.Round(d);
+            if (n < min || n > max) throw new ArgumentException($"'{name}' must be from {min} to {max}.");
+            return n;
+        }
+
+        /// <summary>A required choice; null when missing (values that depend on it are then not asked for yet).</summary>
+        public string Pick(string name, params string[] allowed)
+        {
+            if (!Has(_p, name)) { _missing.Add(name); return null; }
+            return Choice(_p, name, allowed[0], allowed);
+        }
+
+        /// <summary>A required bar type reference; null when missing.</summary>
+        public object Ref(string name)
+        {
+            if (Has(_p, name)) return _p[name];
+            _missing.Add(name);
+            return null;
+        }
+
+        public void Check(string op)
+        {
+            if (_missing.Count > 0)
+                throw new ArgumentException($"{op}: reinforcement values are design input and have no defaults. Give: "
+                                            + string.Join(", ", _missing.Distinct()) + ".");
+        }
+    }
 
     private static int Mm(double feet) => (int)Math.Round(feet * U.MmPerFoot);
 
@@ -196,12 +261,21 @@ internal static class RebarOps
         var doc = c.Doc;
         var main = BarType(doc, NeedRef(p, "bar"), "bar");
         var tie = BarType(doc, NeedRef(p, "tie"), "tie");
-        int nx = Int(p, "bars_x", 3, 2, 30), ny = Int(p, "bars_y", 3, 2, 30);
-        double cover = U.LenMm(p, "cover", 40), spacing = U.LenMm(p, "tie_spacing", 200);
-        double lap = Times(p, "lap_d", 50, main), leg = Leg(main);
-        double footCover = U.LenMm(p, "footing_cover", 50);
-        string topWant = Choice(p, "top", "auto", "auto", "lap", "bend", "none");
-        string botWant = Choice(p, "bottom", "auto", "auto", "footing", "none");
+        var need = new Need(p);
+        int nx = need.Count("bars_x", 2, 30), ny = need.Count("bars_y", 2, 30);
+        double cover = need.Len("cover"), spacing = need.Len("tie_spacing");
+        // "auto" is a geometric rule the engineer chooses: lap where a column continues above, bend where none does
+        string topWant = need.Pick("top", "lap", "bend", "none", "auto");
+        string botWant = need.Pick("bottom", "footing", "none", "auto");
+        double lap = topWant is "lap" or "auto" ? need.Factor("lap_d") * Dia(main) : 0;
+        double leg = topWant is "bend" or "auto" ? need.Len("bend_leg") : 0;
+        double footCover = botWant is "footing" or "auto" ? need.Len("footing_cover") : 0;
+        double footLen = botWant is "footing" or "auto" ? need.Len("foot_length") : 0;
+        double zone = need.OptLen("end_zone") ?? 0;
+        double zoneSpacing = zone > 0 ? need.Len("end_spacing") : spacing;
+        double? starterSpacing = need.OptLen("starter_tie_spacing");
+        need.Check("rebar_column");
+        if (spacing <= 0 || (zone > 0 && zoneSpacing <= 0)) throw new ArgumentException("Tie spacings must be positive.");
         var made = new List<object>();
         foreach (FamilyInstance col in Hosts(c, p, BuiltInCategory.OST_StructuralColumns, "structural column"))
         {
@@ -230,12 +304,18 @@ internal static class RebarOps
                     : throw new ArgumentException($"Column {col.Id.Value}: 'bottom: footing' but there is no structural foundation under it.");
                 fb = LocalBox(footing, f);
                 footingHost = footing;
-                zb = fb.Value.min.Z + footCover + 2 * dm + dm / 2;              // standing on the footing's bottom mesh
+                zb = fb.Value.min.Z + footCover + 2 * dm + dm / 2;              // on the footing's bottom mesh (taken as two layers of this bar)
             }
             double zt = top == "lap" ? hi.Z + lap : top == "bend" ? hi.Z - cover - dm / 2 : hi.Z - cover;
 
             XYZ L(double x, double y, double z) => f.OfPoint(new XYZ(x, y, z));
-            double Foot(double room) { double v = Math.Min(Math.Max(leg, U.Mm(200)), room); return v < 4 * dm ? 0 : v; }
+            bool footShort = false;
+            double Foot(double room)
+            {
+                double v = Math.Max(0, Math.Min(footLen, room));
+                if (v < footLen - U.Mm(1)) footShort = true;
+                return v < U.Mm(1) ? 0 : v;
+            }
             // one bar at (x, y); (ox, oy) points out of the column through the face the bar is on
             IList<Curve> ColumnBar(double x, double y, double ox, double oy, double inward)
             {
@@ -270,24 +350,21 @@ internal static class RebarOps
                     ids.Add(bar.Id.Value);
                 }
 
-            // closed ties, closer at both ends of the column (default end zone: the larger of the long side, height / 6, 450 mm)
+            // closed ties from cover to cover; closer over end zones only when the engineer gives end_zone
             double toff = cover + Dia(tie) / 2;
-            double ta = lo.Z + Math.Max(cover, U.Mm(50)), tb = hi.Z - Math.Max(cover, U.Mm(50));
-            double zone = Has(p, "end_zone") ? U.LenMm(p, "end_zone", 0)
-                        : Math.Max(Math.Max(hi.X - lo.X, hi.Y - lo.Y), Math.Max((hi.Z - lo.Z) / 6, U.Mm(450)));
-            double zoneSpacing = U.LenMm(p, "end_spacing", Math.Min(spacing * U.MmPerFoot, 100));
+            double ta = lo.Z + toff, tb = hi.Z - toff;
             var ties = Zoned(doc, tie, col, f.BasisZ, z => Rect(f, lo.X + toff, lo.Y + toff, hi.X - toff, hi.Y - toff, z).ToList(),
                              ta, tb, spacing, zone, zoneSpacing);
             ids.AddRange(ties.ids);
             // locating ties for the starter bars inside the footing: from above its bottom mesh to under its top cover
             string starterTies = null;
-            if (fb is (XYZ smin, XYZ smax))
+            if (fb is (XYZ smin, XYZ smax) && starterSpacing is double ss && ss > 0)
             {
-                double sa0 = zb + U.Mm(100), sb0 = smax.Z - footCover;
+                double sa0 = zb + dm / 2 + Dia(tie) / 2, sb0 = smax.Z - footCover - Dia(tie) / 2;
                 if (sb0 - sa0 > U.Mm(1))
                 {
                     var st = Bar(doc, RebarStyle.StirrupTie, tie, footingHost, f.BasisZ, Rect(f, lo.X + toff, lo.Y + toff, hi.X - toff, hi.Y - toff, sa0).ToList());
-                    MaxSpacing(st, Math.Min(spacing, U.Mm(150)), sb0 - sa0);
+                    MaxSpacing(st, ss, sb0 - sa0);
                     ids.Add(st.Id.Value);
                     starterTies = $"{tie.Name} in the footing from {Mm(sa0 - smin.Z)} to {Mm(sb0 - smin.Z)} above its bottom";
                 }
@@ -297,10 +374,14 @@ internal static class RebarOps
                 column = col.Id.Value, starterTies, bars = 2 * nx + 2 * Math.Max(0, ny - 2), barType = main.Name,
                 sizeMm = new[] { Mm(hi.X - lo.X), Mm(hi.Y - lo.Y) },
                 top = top == "lap" ? $"bars continue {Mm(lap)} above the column for the lap with the column above"
-                    : top == "bend" ? $"bars bent inward {Mm(Math.Min(leg, Math.Min(x1 - x0, y1 - y0)))} at the top" : "straight, stop at cover",
+                    : top == "bend" ? $"bars bent inward {Mm(Math.Min(leg, Math.Min(x1 - x0, y1 - y0)))} at the top"
+                                      + (Math.Min(x1 - x0, y1 - y0) < leg - U.Mm(1) ? $" (bend_leg {Mm(leg)} limited by the column width inside the ties)" : "")
+                    : "straight, stop at cover",
                 bottom = bottom == "footing" ? $"bars stand on the footing mesh with feet outward (footing {under!.Id.Value})"
+                         + (footShort ? $"; foot_length {Mm(footLen)} shortened to fit inside the footing cover" : "")
                        : under != null ? $"bars start at the top of {under.Category?.Name} {under.Id.Value} (its bars lap into this column)" : "straight, stop at cover",
                 ties = ties.text, rebarIds = ids,
+                note = fb != null && starterSpacing == null ? "No ties inside the footing: give starter_tie_spacing to add them." : null,
             });
         }
         return new { columns = made.Count, items = made };
@@ -312,12 +393,21 @@ internal static class RebarOps
     {
         var doc = c.Doc;
         var bottom = BarType(doc, NeedRef(p, "bottom_bar"), "bottom_bar");
-        var top = BarType(doc, Has(p, "top_bar") ? p["top_bar"] : p["bottom_bar"], "top_bar");
+        var top = BarType(doc, NeedRef(p, "top_bar"), "top_bar");
         var stirrup = BarType(doc, NeedRef(p, "stirrup"), "stirrup");
-        int nb = Int(p, "bottom_count", 3, 2, 30), nt = Int(p, "top_count", 2, 2, 30);
-        double cover = U.LenMm(p, "cover", 40), spacing = U.LenMm(p, "stirrup_spacing", 150);
-        double stock = U.LenMm(p, "stock_length", 12000);
-        string ends = Choice(p, "ends", "anchor", "anchor", "none");
+        var need = new Need(p);
+        int nb = need.Count("bottom_count", 2, 30), nt = need.Count("top_count", 2, 30);
+        double cover = need.Len("cover"), spacing = need.Len("stirrup_spacing");
+        string ends = need.Pick("ends", "anchor", "none");
+        double anchorD = ends == "anchor" ? need.Factor("anchorage_d") : 0;
+        double bendLeg = ends == "anchor" ? need.Len("bend_leg") : 0;
+        double? stockIn = need.OptLen("stock_length");                          // absent: bars are not split
+        double lapD = ends == "anchor" || stockIn != null ? need.Factor("lap_d") : 0;
+        double zone = need.OptLen("end_zone") ?? 0;
+        double zoneSpacing = zone > 0 ? need.Len("end_spacing") : spacing;
+        need.Check("rebar_beam");
+        if (spacing <= 0 || (zone > 0 && zoneSpacing <= 0)) throw new ArgumentException("Stirrup spacings must be positive.");
+        double stock = stockIn ?? 1e9;
         var made = new List<object>();
         foreach (FamilyInstance beam in Hosts(c, p, BuiltInCategory.OST_StructuralFraming, "structural framing member"))
         {
@@ -359,7 +449,7 @@ internal static class RebarOps
             // one layer of bars: z its level, up = +1 for bars that bend up at the ends (bottom bars), -1 bend down (top bars)
             void Layer(RebarBarType t, int n, double z, int up, string what)
             {
-                double need = Times(p, "anchorage_d", 40, t), lap = Times(p, "lap_d", 50, t);
+                double anchorage = anchorD * Dia(t), lap = lapD * Dia(t);
                 double legRoom = (hi.Z - lo.Z) - ob - ot;
                 (double x, double leg, string text) End((Element e, string kind, double room) s, bool atStart)
                 {
@@ -368,13 +458,17 @@ internal static class RebarOps
                     if (s.kind == "continuous") return (face + sign * lap, 0, $"continues {Mm(lap)} into the next span (lap)");
                     if (s.kind == "corner")
                     {
-                        double cleg = Math.Min(Math.Max(Leg(t), need / 2), legRoom);
-                        return (face - sign * cover, cleg, $"corner with {s.e.Category?.Name} {s.e.Id.Value}: to cover + 90 degree bend {Mm(cleg)}");
+                        double cleg = Math.Min(bendLeg, legRoom);
+                        return (face - sign * cover, cleg, $"corner with {s.e.Category?.Name} {s.e.Id.Value}: to cover + 90 degree bend {Mm(cleg)}"
+                                                           + (cleg < bendLeg - U.Mm(1) ? $" (bend_leg {Mm(bendLeg)} limited by the beam depth)" : ""));
                     }
-                    if (s.room >= need) return (face + sign * need, 0, $"{Mm(need)} straight into {s.kind} {s.e.Id.Value}");
+                    if (s.room >= anchorage) return (face + sign * anchorage, 0, $"{Mm(anchorage)} straight into {s.kind} {s.e.Id.Value}");
                     double into = Math.Max(0, s.room);
-                    double leg = Math.Min(Math.Max(Leg(t), need - into), legRoom);
-                    return (face + sign * into, leg, $"{Mm(into)} into {s.kind} {s.e.Id.Value} + 90 degree bend {Mm(leg)}");
+                    double leg = Math.Min(bendLeg, legRoom);
+                    return (face + sign * into, leg, $"anchorage {Mm(anchorage)} does not fit straight: {Mm(into)} into {s.kind} {s.e.Id.Value} "
+                                                     + $"+ 90 degree bend {Mm(leg)}"
+                                                     + (leg < bendLeg - U.Mm(1) ? $" (bend_leg {Mm(bendLeg)} limited by the beam depth)" : "")
+                                                     + "; check this anchorage against your design");
                 }
                 var (xa, la, ta) = End(startSup, true);
                 var (xb, lb, tb) = End(endSup, false);
@@ -401,7 +495,7 @@ internal static class RebarOps
             Layer(bottom, nb, lo.Z + ob, +1, "bottom");
             Layer(top, nt, hi.Z - ot, -1, "top");
 
-            // closed stirrups in the cross-section plane (local y-z), closer near the supports (default zone 2 x depth)
+            // closed stirrups in the cross-section plane (local y-z); closer near the supports only when end_zone is given
             double so = cover + Dia(stirrup) / 2;
             IList<Curve> Ring(double x)
             {
@@ -412,9 +506,7 @@ internal static class RebarOps
                     Line.CreateBound(Q(hi.Y - so, hi.Z - so), Q(lo.Y + so, hi.Z - so)), Line.CreateBound(Q(lo.Y + so, hi.Z - so), Q(lo.Y + so, lo.Z + so)),
                 };
             }
-            double sa = lo.X + Math.Max(cover, U.Mm(50)), sb = hi.X - Math.Max(cover, U.Mm(50));
-            double zone = U.LenMm(p, "end_zone", 2 * (hi.Z - lo.Z) * U.MmPerFoot);
-            double zoneSpacing = U.LenMm(p, "end_spacing", Math.Min(spacing * U.MmPerFoot, 100));
+            double sa = lo.X + cover + Dia(stirrup) / 2, sb = hi.X - cover - Dia(stirrup) / 2;
             var st = Zoned(doc, stirrup, beam, f.BasisX, Ring, sa, sb, spacing, zone, zoneSpacing);
             ids.AddRange(st.ids);
             bool underSlab = JoinGeometryUtils.GetJoinedElements(doc, beam).Any(j => doc.GetElement(j) is Floor);
@@ -434,11 +526,18 @@ internal static class RebarOps
     {
         var doc = c.Doc;
         var bar = BarType(doc, NeedRef(p, "bar"), "bar");
-        double spacing = U.LenMm(p, "spacing", 200), cover = U.LenMm(p, "cover", 50);
         bool topMesh = Flag(p, "top", false), bends = Flag(p, "end_bends", false);
-        var topBar = topMesh ? BarType(doc, Has(p, "top_bar") ? p["top_bar"] : p["bar"], "top_bar") : null;
-        double topSpacing = U.LenMm(p, "top_spacing", spacing * U.MmPerFoot);
-        double stock = U.LenMm(p, "stock_length", 12000);
+        var need = new Need(p);
+        var topRef = topMesh ? need.Ref("top_bar") : null;
+        double spacing = need.Len("spacing"), cover = need.Len("cover");
+        double topSpacing = topMesh ? need.Len("top_spacing") : 0;
+        double? stockIn = need.OptLen("stock_length");                          // absent: bars are not split
+        double lapD = stockIn != null ? need.Factor("lap_d") : 0;
+        double? bendLegIn = bends ? need.OptLen("bend_leg") : null;              // absent: up to under the top mesh / top cover
+        need.Check("rebar_footing");
+        var topBar = topMesh ? BarType(doc, topRef!, "top_bar") : null;
+        if (spacing <= 0 || (topMesh && topSpacing <= 0)) throw new ArgumentException("Spacings must be positive.");
+        double stock = stockIn ?? 1e9;
         var made = new List<object>();
         foreach (var e in Hosts(c, p, BuiltInCategory.OST_StructuralFoundation, "structural foundation"))
         {
@@ -450,7 +549,7 @@ internal static class RebarOps
             // one layer: bars along local x (alongX) or y at height z, spread across the other direction
             void Layer(RebarBarType t, double s, double z, bool alongX, double legUp)
             {
-                double d = Dia(t), lap = Times(p, "lap_d", 50, t);
+                double d = Dia(t), lap = lapD * d;
                 double a = (alongX ? lo.X : lo.Y) + cover + (legUp != 0 ? d / 2 : 0), b = (alongX ? hi.X : hi.Y) - cover - (legUp != 0 ? d / 2 : 0);
                 double across0 = (alongX ? lo.Y : lo.X) + cover + d / 2, across1 = (alongX ? hi.Y : hi.X) - cover - d / 2;
                 XYZ P(double along, double h) => f.OfPoint(alongX ? new XYZ(along, across0, h) : new XYZ(across0, along, h));
@@ -478,9 +577,10 @@ internal static class RebarOps
                 {
                     // bottom bars turned up at the edges, up to under the top mesh (or to the top cover)
                     double ceiling = hi.Z - cover - (topMesh ? 2 * Dia(topBar) : 0) - d / 2;
-                    leg = Math.Min(U.LenMm(p, "bend_leg", 1e6), ceiling - z2);
-                    if (leg < 4 * d) leg = 0;
-                    else bendText = $"bottom bars turned up {Mm(leg)} at the edges";
+                    leg = Math.Min(bendLegIn ?? double.MaxValue, ceiling - z2);
+                    if (leg <= d) { leg = 0; bendText = "straight: the footing is too shallow for turned-up bars"; }
+                    else bendText = $"bottom bars turned up {Mm(leg)} at the edges"
+                                  + (bendLegIn is double want && leg < want - U.Mm(1) ? $" (bend_leg {Mm(want)} limited by the footing depth)" : "");
                 }
                 Layer(t, s, z1, true, leg);
                 Layer(t, s, z2, false, leg > 0 ? leg - d : 0);
@@ -502,8 +602,11 @@ internal static class RebarOps
     {
         var doc = c.Doc;
         var bar = BarType(doc, NeedRef(p, "bar"), "bar");
-        double spacing = U.LenMm(p, "spacing", 200);
-        string layers = Choice(p, "layers", "both", "bottom", "top", "both");
+        var need = new Need(p);
+        double spacing = need.Len("spacing");
+        string layers = need.Pick("layers", "bottom", "top", "both");
+        need.Check("rebar_area");
+        if (spacing <= 0) throw new ArgumentException("'spacing' must be positive.");
         var arType = new FilteredElementCollector(doc).OfClass(typeof(AreaReinforcementType)).FirstElementId();
         if (arType == ElementId.InvalidElementId) arType = AreaReinforcementType.CreateDefaultAreaReinforcementType(doc);
         var hook = ElementId.InvalidElementId;

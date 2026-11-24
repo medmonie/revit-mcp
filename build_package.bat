@@ -31,7 +31,7 @@ if not exist "%OUT%\revit-mcp-server.exe" goto fail
 rem The exe must start and answer the MCP handshake; the smoke test does that against the Python sources already.
 
 echo [3/4] installer zip >> "%LOG%"
-for %%F in (install.bat uninstall.bat configure_clients.ps1 INSTALL.txt) do copy /y "package\%%F" "%OUT%\" >> "%LOG%" 2>&1 || goto fail
+for %%F in (install.bat uninstall.bat configure_clients.ps1 check_user.ps1 INSTALL.txt) do copy /y "package\%%F" "%OUT%\" >> "%LOG%" 2>&1 || goto fail
 for %%F in (README.md CHANGELOG.md LICENSE.md) do copy /y "%%F" "%OUT%\" >> "%LOG%" 2>&1 || goto fail
 powershell -NoProfile -Command "Compress-Archive -Path dist\RevitMcp\* -DestinationPath dist\RevitMcp.zip -Force" >> "%LOG%" 2>&1 || goto fail
 

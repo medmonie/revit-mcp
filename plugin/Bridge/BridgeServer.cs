@@ -10,8 +10,10 @@ namespace RevitMcpBridge;
 ///   request : {"id":"..","token":"..","method":"list_levels","params":{...}}
 ///   response: {"id":"..","ok":true,"result":{...}}  or  {"id":"..","ok":false,"error":".."}
 /// The port is chosen by the OS and, together with a random per-session token, written to
-/// %LOCALAPPDATA%\RevitMcpBridge\bridge.json. The MCP server reads that file on every call, so no
-/// configuration is needed and processes without access to the file cannot call in.
+/// %LOCALAPPDATA%\RevitMcpBridge\sessions\<pid>.json (one per running Revit). bridge.json names the default Revit:
+/// the first one started, until MCP Status is pressed in another; when the default closes it hands over to another
+/// open Revit. The MCP server reads these files on every call, so no configuration is needed and processes without
+/// access to the files cannot call in.
 /// </summary>
 internal static class BridgeServer
 {
@@ -49,13 +51,15 @@ internal static class BridgeServer
         _listener = new TcpListener(IPAddress.Loopback, 0);   // 127.0.0.1 only, never 0.0.0.0
         _listener.Start();
         _running = true;
-        WriteBridgeFile();
         try
         {
             Directory.CreateDirectory(IOPath.GetDirectoryName(SessionFile));
+            RemoveStaleSessions();
             Publish(SessionFile);
         }
         catch { /* listing sessions is a convenience */ }
+        // A second Revit must not take over from one that is already open: Claude would silently switch models.
+        if (!BridgeFileOwnerRunning()) WriteBridgeFile();
 
         new Thread(AcceptLoop) { IsBackground = true, Name = "RevitMcpBridge accept" }.Start();
     }
@@ -90,14 +94,67 @@ internal static class BridgeServer
         ["revit"] = _revitVersion, ["startedUtc"] = _startedUtc, ["protocol"] = 4,
     });
 
-    private static bool BridgeFileIsMine()
+    private static int? FilePid(string path)
     {
         try
         {
-            return Json.Parse(File.ReadAllText(BridgeFile)) is Obj o && o.TryGetValue("pid", out var pid)
-                   && pid is double d && (int)d == Process.GetCurrentProcess().Id;
+            return Json.Parse(File.ReadAllText(path)) is Obj o && o.TryGetValue("pid", out var pid) && pid is double d
+                ? (int)d : (int?)null;
+        }
+        catch { return null; }
+    }
+
+    private static bool BridgeFileIsMine() => FilePid(BridgeFile) == Process.GetCurrentProcess().Id;
+
+    /// <summary>True when the process is a running Revit (a pid of a closed Revit may be reused by another program).</summary>
+    private static bool RevitRunning(int pid)
+    {
+        try
+        {
+            using (var p = Process.GetProcessById(pid))
+                return !p.HasExited && string.Equals(p.ProcessName, "Revit", StringComparison.OrdinalIgnoreCase);
         }
         catch { return false; }
+    }
+
+    private static bool BridgeFileOwnerRunning()
+    {
+        int? pid = File.Exists(BridgeFile) ? FilePid(BridgeFile) : null;
+        return pid.HasValue && pid.Value != Process.GetCurrentProcess().Id && RevitRunning(pid.Value);
+    }
+
+    /// <summary>Session files left by a Revit that crashed or was killed (OnShutdown never ran).</summary>
+    private static void RemoveStaleSessions()
+    {
+        foreach (string f in Directory.GetFiles(IOPath.GetDirectoryName(SessionFile), "*.json"))
+        {
+            if (!int.TryParse(IOPath.GetFileNameWithoutExtension(f), out int pid) || RevitRunning(pid)) continue;
+            try { File.Delete(f); } catch { /* another Revit may be cleaning up too */ }
+        }
+    }
+
+    /// <summary>When the default Revit closes, make another open one the default instead of leaving none.</summary>
+    private static void HandOver()
+    {
+        string folder = IOPath.GetDirectoryName(SessionFile);
+        int me = Process.GetCurrentProcess().Id;
+        if (Directory.Exists(folder))
+        {
+            foreach (string f in Directory.GetFiles(folder, "*.json").OrderBy(File.GetLastWriteTimeUtc))
+            {
+                if (!int.TryParse(IOPath.GetFileNameWithoutExtension(f), out int pid) || pid == me || !RevitRunning(pid)) continue;
+                string temp = BridgeFile + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    File.Copy(f, temp, true);
+                    File.Replace(temp, BridgeFile, null);
+                    return;
+                }
+                catch { /* try the next one */ }
+                finally { try { if (File.Exists(temp)) File.Delete(temp); } catch { } }
+            }
+        }
+        File.Delete(BridgeFile);
     }
 
     public static void Stop()
@@ -105,14 +162,16 @@ internal static class BridgeServer
         _running = false;
         try { _listener?.Stop(); } catch { /* shutting down */ }
         _listener = null;
-        try { if (File.Exists(BridgeFile) && BridgeFileIsMine()) File.Delete(BridgeFile); } catch { /* best effort */ }
         try { if (File.Exists(SessionFile)) File.Delete(SessionFile); } catch { /* best effort */ }
+        try { if (File.Exists(BridgeFile) && BridgeFileIsMine()) HandOver(); } catch { /* best effort */ }
     }
 
     public static string Describe() => _listener == null
         ? "Revit MCP bridge: not running."
         : $"Revit MCP bridge v{BridgeInfo.Version} (Revit {_revitVersion}) is listening on 127.0.0.1:{Port}.\n" +
           $"Editing by Claude: {(WriteGate.Granted ? "ALLOWED for this Revit session" : "not allowed yet")}.\n" +
+          (BridgeFileIsMine() ? "This Revit is Claude's default. With several Revit sessions open, Claude still asks which one to edit (select_revit).\n"
+                              : "Another open Revit is Claude's default.\n") +
           $"Connection details: {BridgeFile}\nAudit log: {Audit.FilePath}";
 
     private static void AcceptLoop()

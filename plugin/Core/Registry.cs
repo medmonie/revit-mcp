@@ -72,6 +72,14 @@ internal static class Registry
         Read("list_parameters", ManageRead.ListParameters);
         Read("list_worksets", ManageRead.ListWorksets);
         Read("list_phases", ManageRead.ListPhases);
+        // modify and documentation depth (phase 8)
+        Read("list_groups", DepthRead.ListGroups);
+        Read("list_assemblies", DepthRead.ListAssemblies);
+        Read("get_geometry", DepthRead.GetGeometry);
+        // standards and data (phase 9)
+        Read("list_global_parameters", DataRead.ListGlobalParameters);
+        Read("get_material", DataRead.GetMaterial);
+        Read("list_keynotes", DataRead.ListKeynotes);
         // meta
         Read("describe_api", ApiRead.DescribeApi);
         Read("family_inspect", FamilyRead.FamilyInspect);

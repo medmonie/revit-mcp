@@ -5,6 +5,11 @@ setlocal
 cd /d "%~dp0"
 tasklist /fi "imagename eq Revit.exe" | find /i "Revit.exe" >nul && (echo Close Revit first, then run uninstall.bat again. & pause & exit /b 1)
 
+echo Uninstalling for %USERDOMAIN%\%USERNAME%  (%USERPROFILE%)
+if /i "%~1"=="/this_user" goto :user_ok
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0check_user.ps1" >nul 2>&1
+if errorlevel 2 (echo This window runs as %USERNAME%, not as the desktop user. Run uninstall.bat as the user who runs Revit, without Run as administrator; or uninstall.bat /this_user. & pause & exit /b 1)
+:user_ok
 for /d %%Y in ("%APPDATA%\Autodesk\Revit\Addins\*") do (
   if exist "%%Y\RevitMcpBridge.addin" del /q "%%Y\RevitMcpBridge.addin"
   if exist "%%Y\RevitMcpBridge" rmdir /s /q "%%Y\RevitMcpBridge"

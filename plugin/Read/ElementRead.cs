@@ -3,11 +3,11 @@ namespace RevitMcpBridge;
 /// <summary>Read actions about individual elements and the user's selection.</summary>
 internal static class ElementRead
 {
-    private static Obj Row(Document doc, Element e, bool location, bool box, List<string> names, bool details = false)
+    private static Obj Row(Document doc, Element e, bool location, bool box, List<string> names, bool details = false, Transform tf = null)
     {
         var o = Describe.Brief(doc, e);
-        if (location && Describe.Location(e) is object loc) o["location"] = loc;
-        if (box && Describe.Box(e) is object b) o["box"] = b;
+        if (location && Describe.Location(e, tf) is object loc) o["location"] = loc;
+        if (box && Describe.Box(e, tf) is object b) o["box"] = b;
         if (names.Count > 0)
         {
             var info = details ? new Obj() : null;
@@ -19,7 +19,9 @@ internal static class ElementRead
 
     public static object GetElements(Rc rc, Obj p)
     {
-        var doc = rc.Doc;
+        var host = rc.Doc;
+        var doc = LinkScope.DocOf(host, p, out var link);
+        string where = link == null ? "this model" : $"link '{link.Doc.Title}'";
         IEnumerable<Element> src;
         var missing = new List<string>();
         bool byReference = Has(p, "ids") || Has(p, "unique_ids");
@@ -32,7 +34,7 @@ internal static class ElementRead
             {
                 if (e != null) found.Add(e);
                 else if (allowMissing) missing.Add(key);
-                else throw new ArgumentException($"No element with id '{key}' in this model.");
+                else throw new ArgumentException($"No element with id '{key}' in {where}.");
             }
 
             if (Has(p, "ids"))
@@ -45,7 +47,10 @@ internal static class ElementRead
         {
             var cats = Find.Cats(doc, p, "category");
             if (cats.Count == 0) throw new ArgumentException("get_elements needs 'category' (one name or a list) or 'ids'. Use count_by_category to see what the model holds.");
-            var col = Has(p, "view") ? new FilteredElementCollector(doc, Find.ViewOf(doc, Ref(p, "view")).Id) : new FilteredElementCollector(doc);
+            // A view always belongs to the host; with a link it limits the link's elements to those visible in that host view.
+            var col = !Has(p, "view") ? new FilteredElementCollector(doc)
+                : link == null ? new FilteredElementCollector(doc, Find.ViewOf(doc, Ref(p, "view")).Id)
+                : new FilteredElementCollector(host, Find.ViewOf(host, Ref(p, "view")).Id, link.Instance.Id);
             src = cats.Count == 1
                 ? col.WhereElementIsNotElementType().OfCategory(cats[0])
                 : col.WhereElementIsNotElementType().WherePasses(new ElementMulticategoryFilter(cats));
@@ -67,10 +72,11 @@ internal static class ElementRead
         var names = StrList(p, "params", 40, required: false).Distinct().ToList();
         long after = Has(p, "after_id") ? NeedId(p, "after_id").Value : long.MinValue;
         var page = (Obj)Describe.Page(p, src.Where(e => e.Id.Value > after).OrderBy(e => e.Id.Value)
-            .Select(e => Row(doc, e, location, box, names, details)), "elements", 100, 5000);
+            .Select(e => Row(doc, e, location, box, names, details, link?.Tf)), "elements", 100, 5000);
         if ((bool)page["truncated"] && page["elements"] is List<Obj> rows)
             page["nextAfterId"] = Text(rows[rows.Count - 1]["id"]);
         if (byReference) page["missingIds"] = missing;
+        if (link != null) page["link"] = link.Info();
         return page;
     }
 
@@ -99,17 +105,20 @@ internal static class ElementRead
 
     public static object GetElement(Rc rc, Obj p)
     {
-        var doc = rc.Doc;
-        var e = Find.Elem(doc, NeedId(p, "id"));
+        var doc = LinkScope.DocOf(rc.Doc, p, out var link);
+        var id = NeedId(p, "id");
+        var e = link == null ? Find.Elem(doc, id)
+            : doc.GetElement(id) ?? throw new ArgumentException($"No element with id {id.Value} in link '{doc.Title}'.");
         var o = Describe.Brief(doc, e);
         o["units"] = U.Name;
         o["class"] = e.GetType().Name;
-        if (Describe.Location(e) is object loc) o["location"] = loc;
-        if (Describe.Box(e) is object box) o["box"] = box;
+        if (link != null) o["link"] = link.Info();
+        if (Describe.Location(e, link?.Tf) is object loc) o["location"] = loc;
+        if (Describe.Box(e, link?.Tf) is object box) o["box"] = box;
         if (e is FamilyInstance fi && fi.Host != null) o["hostId"] = fi.Host.Id.Value;
         if (e.Pinned) o["pinned"] = true;
         if (e.OwnerViewId != null && e.OwnerViewId != ElementId.InvalidElementId) o["ownerView"] = doc.GetElement(e.OwnerViewId)?.Name;
-        if (doc.IsWorkshared)
+        if (link == null && doc.IsWorkshared)
         {
             try { o["checkout"] = WorksharingUtils.GetCheckoutStatus(doc, e.Id).ToString(); } catch { /* optional */ }
         }

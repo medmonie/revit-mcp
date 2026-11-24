@@ -14,7 +14,23 @@ internal static class LinkRead
                 o["typeId"] = t.Id.Value;
                 o["file"] = t.Name;
                 try { o["status"] = t.GetLinkedFileStatus().ToString(); } catch { /* optional */ }
+                try { o["attachment"] = t.AttachmentType.ToString(); } catch { /* optional */ }
+                try { if (t.IsNestedLink) o["nested"] = true; } catch { /* optional */ }
+                try
+                {
+                    var r = t.GetExternalFileReference();
+                    if (r != null) o["path"] = ModelPathUtils.ConvertModelPathToUserVisiblePath(r.GetAbsolutePath());
+                }
+                catch { /* cloud or unresolved path */ }
             }
+            var linked = i.GetLinkDocument();
+            o["loaded"] = linked != null;
+            if (linked != null)
+            {
+                o["document"] = linked.Title;
+                o["workshared"] = linked.IsWorkshared;
+            }
+            try { o["transform"] = LinkScope.TransformOut(i.GetTotalTransform()); } catch { /* optional */ }
             return o;
         }).ToList();
 
@@ -29,7 +45,12 @@ internal static class LinkRead
             return o;
         }).ToList();
 
-        return new { revitLinks = revit, cadFiles = cad };
+        return new
+        {
+            units = U.Name, revitLinks = revit, cadFiles = cad,
+            note = revit.Count == 0 ? null : "Read inside a loaded link with link=<id or file> on get_elements, get_element, count_by_category, "
+                + "list_types, list_levels and list_grids. transform: the link's origin and plan rotation in this model.",
+        };
     }
 
     private sealed class CadWalk

@@ -374,7 +374,7 @@ internal static class DocOps
     // ---------------------------------------------------------------- dimensions and spot elevations
 
     /// <summary>Planar faces of an element with references usable in a dimension, in model coordinates.</summary>
-    private static IEnumerable<(PlanarFace face, Reference reference, XYZ normal, XYZ origin)> Faces(Element e, View view)
+    internal static IEnumerable<(PlanarFace face, Reference reference, XYZ normal, XYZ origin)> Faces(Element e, View view)
     {
         var opts = new Options { ComputeReferences = true, IncludeNonVisibleObjects = false };
         if (view != null) opts.View = view;
@@ -398,6 +398,37 @@ internal static class DocOps
                                 yield return (pf, pf.Reference, tf.OfVector(pf.FaceNormal), tf.OfPoint(pf.Origin));
             }
         }
+    }
+
+    /// <summary>
+    /// A point that lies on a planar face, in model coordinates ('shift' moves symbol geometry to the instance): the given
+    /// plan point projected onto the face (must fall inside it), else the centre of one of the face's own triangles (the
+    /// centre of the face's box can fall outside an L-shaped or holed face).
+    /// </summary>
+    internal static XYZ PointOnFace(PlanarFace face, XYZ shift, XYZ planPoint, long elementId)
+    {
+        if (planPoint != null)
+        {
+            var local = new XYZ(planPoint.X, planPoint.Y, face.Origin.Z) - new XYZ(shift.X, shift.Y, 0);
+            var hit = face.Project(local);
+            if (hit == null) throw new ArgumentException($"'point' {string.Join(", ", U.Xy(planPoint))} is not over the top face of element {elementId}.");
+            return hit.XYZPoint + shift;
+        }
+        var mesh = face.Triangulate();
+        if (mesh != null && mesh.NumTriangles > 0)
+        {
+            // the largest triangle keeps the point away from the face edges
+            MeshTriangle best = null; double area = -1;
+            for (int i = 0; i < mesh.NumTriangles; i++)
+            {
+                var t = mesh.get_Triangle(i);
+                double a = (t.get_Vertex(1) - t.get_Vertex(0)).CrossProduct(t.get_Vertex(2) - t.get_Vertex(0)).GetLength();
+                if (a > area) { area = a; best = t; }
+            }
+            return (best.get_Vertex(0) + best.get_Vertex(1) + best.get_Vertex(2)) / 3 + shift;
+        }
+        var bb = face.GetBoundingBox();
+        return face.Evaluate((bb.Min + bb.Max) / 2) + shift;
     }
 
     private static object DimensionElements(EditContext c, Obj p)
@@ -468,13 +499,7 @@ internal static class DocOps
             var top = Faces(e, view).Where(f => f.normal.Z > 0.999).OrderByDescending(f => f.origin.Z).FirstOrDefault();
             if (top.face == null) top = Faces(e, null).Where(f => f.normal.Z > 0.999).OrderByDescending(f => f.origin.Z).FirstOrDefault();
             if (top.face == null) { skipped.Add(new { id = id.Value, reason = "no exposed top face (covered by a joined slab or not horizontal); tag the slab above instead" }); continue; }
-            var bb = top.face.GetBoundingBox();
-            var uv = (bb.Min + bb.Max) / 2;
-            XYZ at = Has(p, "point") ? new XYZ(U.NeedPt(p, "point").X, U.NeedPt(p, "point").Y, top.origin.Z) : null;
-            // the face point in model coordinates: evaluate on the face, then move it like the face origin was moved
-            var local = top.face.Evaluate(uv);
-            var shift = top.origin - top.face.Origin;
-            XYZ origin = at ?? local + shift;
+            XYZ origin = PointOnFace(top.face, top.origin - top.face.Origin, Has(p, "point") ? U.NeedPt(p, "point") : null, id.Value);
             XYZ bend = origin + new XYZ(U.Mm(600), U.Mm(600), 0), end = origin + new XYZ(U.Mm(1200), U.Mm(600), 0);
             var spot = doc.Create.NewSpotElevation(view, top.reference, origin, bend, end, origin, leader);
             made.Add(new { id = spot.Id.Value, element = id.Value, elevation = U.Out(top.origin.Z) });

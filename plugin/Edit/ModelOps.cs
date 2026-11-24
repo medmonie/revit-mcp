@@ -66,7 +66,8 @@ internal static class ModelOps
         if (d.GetLength() < 1e-9) throw new ArgumentException("'direction' must be a non-zero [x, y] vector.");
         var system = BeamSystem.Create(doc, loop, level, d.Normalize(), false);
         system.BeamType = symbol;
-        double spacing = U.LenMm(p, "spacing", 1500);
+        double spacing = U.In(NeedDbl(p, "spacing"));                       // joist spacing is design input: no default
+        if (spacing <= 0) throw new ArgumentException("'spacing' must be positive.");
         string just = Choice(p, "justification", "center", "center", "beginning", "end", "directionline");
         var justify = just == "beginning" ? BeamSystemJustifyType.Beginning
                     : just == "end" ? BeamSystemJustifyType.End

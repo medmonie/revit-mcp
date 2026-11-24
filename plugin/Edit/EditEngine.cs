@@ -33,6 +33,8 @@ internal static class EditEngine
         FamilyOps.Register(Ops);
         FixOps.Register(Ops);
         ManageOps.Register(Ops);
+        DepthOps.Register(Ops);
+        DataOps.Register(Ops);
     }
 
     public static List<string> OperationNames => Ops.Keys.OrderBy(k => k).ToList();

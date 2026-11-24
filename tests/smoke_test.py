@@ -319,6 +319,70 @@ def static_checks() -> None:
     print(f"static checks ok: version {version}, catalogue matches the add-in sources, docs/ACTIONS.md is current")
 
 
+def two_revits() -> None:
+    """Two Revit sessions open: reads go to the default one with a warning, edits need select_revit, and a crashed
+    default (stale files) or a closed second Revit never leaves Claude without the one still open."""
+    def start(bridge_file: Path, **env) -> subprocess.Popen:
+        before = set((bridge_file.parent / "sessions").glob("*.json"))
+        fake = subprocess.Popen([sys.executable, str(ROOT / "tests" / "fake_bridge.py"), str(bridge_file)],
+                                env={**os.environ, **env}, stdout=subprocess.DEVNULL)
+        for _ in range(50):
+            if set((bridge_file.parent / "sessions").glob("*.json")) - before:
+                return fake
+            time.sleep(0.1)
+        raise SystemExit("fake bridge did not start")
+
+    async def both_open(bridge_file: Path, a: int, b: int) -> None:
+        async with stdio_client(server_params(bridge_file)) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                ping = await run(session, "ping")
+                assert ping["activeModel"] == "A.rvt" and [o["pid"] for o in ping["otherRevitSessions"]] == [b], ping
+                assert "select_revit" in ping["note"], ping
+                await expect_error(session, "edit", {"operations": [{"op": "save"}]}, "2 revit sessions are open")
+                tx = bridge_file.parent / "model.xlsx"
+                await run(session, "excel_template", {"path": str(tx)})
+                from openpyxl import load_workbook
+                wb = load_workbook(tx)
+                wb["Levels"].append(["L1", 4000, "structural"])
+                wb.save(tx)
+                await expect_error(session, "excel_to_model", {"path": str(tx), "dry_run": True}, "2 revit sessions are open")
+                listed = {s["pid"]: s for s in (await run(session, "list_revit_sessions"))["sessions"]}
+                assert listed[a]["activeModel"] == "A.rvt" and listed[b]["activeModel"] == "B.rvt", listed
+                await run(session, "select_revit", {"pid": b})
+                ping = await run(session, "ping")
+                assert ping["activeModel"] == "B.rvt" and "otherRevitSessions" not in ping, ping
+                first = await run(session, "edit", {"operations": [{"op": "save"}]})
+                assert first["pid"] == b and first["permission"] == "not granted", first   # reaches B only
+                await run(session, "select_revit", {"pid": "auto"})
+                assert (await run(session, "ping"))["activeModel"] == "A.rvt"
+
+    async def only(bridge_file: Path, model: str) -> None:
+        async with stdio_client(server_params(bridge_file)) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                ping = await run(session, "ping")
+                assert ping["activeModel"] == model and "otherRevitSessions" not in ping, ping
+                first = await run(session, "edit", {"operations": [{"op": "save"}]})
+                assert first["permission"] == "not granted", first   # edits allowed again: one Revit open
+
+    with tempfile.TemporaryDirectory() as tmp:
+        bridge_file = Path(tmp) / "bridge.json"
+        fa = start(bridge_file, FAKE_MODEL="A.rvt", FAKE_REVIT="2024")
+        fb = start(bridge_file, FAKE_MODEL="B.rvt", FAKE_REVIT="2024", FAKE_DEFAULT="0")
+        try:
+            asyncio.run(both_open(bridge_file, fa.pid, fb.pid))
+            fb.kill(); fb.wait(timeout=5)                     # B crashes: its session file stays behind
+            asyncio.run(only(bridge_file, "A.rvt"))
+            fb = start(bridge_file, FAKE_MODEL="B.rvt", FAKE_REVIT="2024", FAKE_DEFAULT="0")
+            fa.kill(); fa.wait(timeout=5)                     # the default crashes: bridge.json names a dead Revit
+            asyncio.run(only(bridge_file, "B.rvt"))
+        finally:
+            for f in (fa, fb):
+                f.kill(); f.wait(timeout=5)
+    print("two Revit sessions ok: no silent switch, edits need select_revit, a closed or crashed one never strands the other")
+
+
 def with_fake(coro, **env) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         bridge_file = Path(tmp) / "bridge.json"
@@ -347,4 +411,5 @@ if __name__ == "__main__":
     with_fake(old_addin, FAKE_PROTOCOL="2")
     with_fake(old_addin, FAKE_PROTOCOL="3")
     with_fake(switched_document, FAKE_EDIT_DOCUMENT="other-model")
+    two_revits()
     print("\nALL OK")

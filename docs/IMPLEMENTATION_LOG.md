@@ -1,5 +1,103 @@
 # Revit MCP implementation log
 
+## 2026-11-24 · Version 0.17.0 (phases 8 and 9: modify / documentation depth, standards and data)
+
+New files: `plugin/Edit/DepthOps.cs` (flip, end_join, family_place_hosted, group_create / group_place / ungroup,
+assembly_create / assembly_views, schedule_set, dimension_rotated / angular / radial, spot_coordinate),
+`plugin/Read/DepthRead.cs` (list_groups, list_assemblies, get_geometry), `plugin/Edit/DataOps.cs` (global parameters,
+material_asset_set), `plugin/Read/DataRead.cs` (list_global_parameters, get_material, list_keynotes),
+`tests/live_p89.py` + `run_live_p89_task04.bat` / `run_live_p89_scratch.bat`, `package/check_user.ps1`.
+Changed: ExportOps (DWF, FBX, gbXML, DGN), FixOps (duplicate_instances, overlapping_lines), DocOps (shared
+PointOnFace for spot_elevation / spot_coordinate), EditEngine, Registry, catalogue (45 reads, 118 edit operations).
+
+API checked first in both RevitAPI.dll files (metadata dump): RadialDimension.Create exists only in 2027; no API
+creates spot slopes; UNIFORMAT_CODE is missing in 2027 (looked up by name); EnergyAnalysisDetailModelOptions and
+EnergyDataSettings.GetFromDocument are obsolete in 2027 (guarded). Both years 0 warnings, 0 errors.
+
+**Live test, Revit 2024.** The running Claude Desktop still served the 0.16 server exe (it refuses names it does not
+know), so the tests call the add-in directly through `server/bridge_client.py` from a script started by double-click.
+Task 04: reads and dry runs only (refused unless the active model is Task 04). Scratch: real runs in a new, never
+saved project (refused otherwise); closed without saving. Each run ended with Task 04 unchanged (baseline counts,
+no unsaved changes, 1090 purgeable, 273 rebar sets / 5335.9 kg).
+
+| Area | Result |
+| --- | --- |
+| get_geometry | Column 2187231 original 0.765 m3 = 0.3 x 0.6 x 4.25, edges 20600 mm; as modelled 0.7108 m3 (slab cut). Scratch wall (6000 - 127) x 0.254 x 3.0 = 4.4752 m3 |
+| list_groups / list_assemblies / list_keynotes / get_material / list_global_parameters | Task 04: 11 group types; keynote file RevitKeynotes_Metric.txt, 3840 entries; _CONCRETE-RC has only an appearance asset |
+| flip | Wall flipped; column refused by its family; missing 'what' refused |
+| end_join | Beam joins disallowed both ends + 150 start extension; wall end; extension on a wall refused |
+| family_place_hosted | Refuses non-work-plane families with their kind (Task 04 has none to place) |
+| groups | Create + place 2 copies; ungroup (real); list_groups after: 2 instances x 2 walls |
+| assemblies | Create (name applied after commit: Revit makes the type at commit), views 3D / front / parts list (real) |
+| schedule_set | Filter Length > 4500, sort with header, m 2 decimals, totals: three 6.00 m rows, total 18.00 |
+| dimensions | Rotated 0 / 90 deg; 30 deg refused (no square faces); angular A / 2 = 90 deg at (2500, 0); radial refused on 2024 |
+| spot_coordinate / spot_elevation | On the L-shaped slab 1739650 after the PointOnFace fix (box centre fell outside the face) |
+| fix_warnings | All kinds dry run: 48 warnings, nothing fixable in Task 04; unknown kind refused |
+| global parameters | Create length / yes_no / text, formula 1000 mm + 500 mm = 1500; drives column Top Offset (dry) and wall Base Offset 200 -> 350 (real). Wall Unconnected Height refused by Revit |
+| material_asset_set | Revit 2024 refuses SetStructuralAsset on existing assets ("internal error"): edited assets are always new PropertySetElements; shared asset copied for the material (density 2500, E 27000, conductivity 1.6 read back), in place with change_shared (old asset replaced, name kept, all four users moved); render colour on a Generic asset #3366CC read back; non-Generic refused |
+| exports | DWF (105 KB) and FBX (93 KB) written; DWF needs a modifiable document (rolled-back transaction). DGN failed without a DGN setup in the model (seed parameter added, untested). gbXML failed: no compatible energy analysis model, even with the analysis mode and model made inside the rolled-back transaction |
+
+Several Revit sessions (from Mohamed's report, "two Revits mess it up"). Faults in 0.17.0 and before: every Revit
+overwrote bridge.json at startup, so a second Revit silently took all calls and edits; closing it deleted bridge.json
+and left "Revit is not reachable" while the first was still open; crashed Revits left session files (three on the
+laptop, from 20 and 23 Nov). Fix: the add-in writes bridge.json only when no running Revit owns it, hands it to another
+running Revit when the default closes, and removes session files whose Revit is not running; the server uses the
+only listening Revit whatever bridge.json says, sends reads to the default when several listen (ping lists the others)
+and refuses edits until select_revit. Smoke test: two fake add-ins (both open, crash of each). Live, Revit 2024 started
+twice from Explorer (tests/live_two_revits.py via run_two_revits_check.bat):
+
+| Stage | Result |
+| --- | --- |
+| No Revit, before | 3 stale session files, no bridge.json, "not reachable" |
+| A started, Task 04 open | Stale files removed; default = A; one session |
+| B started, new Project1 | Default still A (Task 04); ping lists B; edit refused "2 Revit sessions are open" |
+| A closed | bridge.json handed to B; automatic calls reach Project1 (also through the old server in Claude Desktop) |
+| B closed | No files left |
+
+Installer (from Mohamed's report): on a domain controller install.bat installed into C:\Users\mohamed.hamed. The
+scripts use %APPDATA% / %LOCALAPPDATA% / %USERPROFILE% of the account that runs them; an elevated window under
+another account installs there. install.bat / uninstall.bat now print the account and stop when it is not the
+owner of the desktop session (check_user.ps1, explorer.exe owner); /this_user overrides. Tested only for the normal
+case (same user) here; the domain controller case needs a run there.
+
+## 2026-11-24 · Version 0.16.0 (phase 6: read elements inside linked Revit models)
+
+| File | Change |
+| --- | --- |
+| `plugin/Core/LinkScope.cs` (new) | Resolves `link` (instance id, link type id placed once, instance name or file name with or without .rvt), needs a loaded link, `coordinates` host / link, transform output (origin, plan rotation, tilted, mirrored) and the `link` block every result carries |
+| `plugin/Core/Describe.cs` | `Location` / `Box` take an optional transform; host output unchanged (no transform = identity path) |
+| `plugin/Read/ElementRead.cs` | get_elements, get_element read the link's document; `view` with link uses Revit's host-view link collector (`FilteredElementCollector(host, viewId, linkId)`, present in the 2024 API) |
+| `plugin/Read/ModelRead.cs` | count_by_category, list_types, list_levels (elevation + linkElevation), list_grids with link |
+| `plugin/Read/LinkRead.cs` | list_links: path, attachment, nested, loaded, document, workshared, transform |
+| `server/catalog.py`, `README.md` (4.1a and section 5), `docs/ACTIONS.md`, `CHANGELOG.md`, `ROADMAP.md`, version 0.16.0 | Wording, workflow, status |
+
+Compile check in the cloud workspace this time: .NET 10 SDK and Mono 4.8 reference assemblies from the Ubuntu
+archive (nuget.org is blocked there), two small projects against `refs\2024` and `refs\2027`: 0 warnings, 0 errors
+both years. Laptop `build_package.bat`: both years 0 / 0, `RESULT=OK`; `install.bat` `RESULT=OK`.
+
+**Live test, Revit 2024 (24.3.60.12), bridge 0.16.0.** Task 04 has no Revit links, so the host was a new unsaved
+scratch project (Project1, Imperial Multi-discipline template) with Task 04 linked into it. Task 04 itself was not
+opened or edited during the link tests. Real edits only in Project1: revit_link (origin to origin, unpinned), move
+(10000, 5000), rotate 30 deg about (10000, 5000), view_3d_create LinkTest3D. Project1 was closed without saving.
+
+| Check | Result |
+| --- | --- |
+| list_links | path, Loaded, Overlay, document title, transform origin [0,0,0] rotation 0; after the move / rotate [10000,5000,0], 30 |
+| count_by_category link=<instance id> | 27 columns, 64 framing, 21 walls, 7 floors, 33 foundations, 273 rebar = Task 04 baseline |
+| get_elements link=<file name without .rvt>, identity | Column 2187231 (8600, -6050), rot 90; beam 1723276 (8400,0)-(8400,-5950), Mark B6: same as Task 04 itself |
+| get_elements link=<type id>, moved + rotated | Column (20472.819, 4060.546), rot 120; beam (17274.613, 9200)-(20249.613, 4047.149), length 5950: equal to the hand calculation R30 * p + (10000, 5000) |
+| coordinates=link | Original link coordinates returned |
+| list_levels / list_grids link | 4 link levels (elevation and linkElevation, no vertical offset); grid 2 rotated 30 deg, length 21347.629 unchanged |
+| level + type filters with link | Link level / type names (FOUNDATION PLAN, COL-RC-RECT 300X600); the host still answers with its own levels (L1, L2) |
+| get_element link | Full parameters of beam B6 from the link, location / box transformed |
+| view with link | Plan L1: 0 (link elements at about 98.5-106.9 m, outside L1's view range: correct). 3D view: 428 physical elements, the sheets / legend components of the unfiltered count drop out |
+| Errors | Unknown link lists the links with ids; coordinates=shared refused with the allowed values |
+| Fix from the test | list_types with link now carries the `link` block |
+| Rebuild + reinstall with the fix, then regression on Task 04 (reads only, opened from Recent) | ping 0.16.0; get_elements 2187231 / 1723276 without link: same location and box as before the change; takeoff columns 27 / 18.614 m3; rebar_takeoff 273 sets, 5335.9 kg; model_health 60594 elements, 1090 purgeable; list_links note null with no Revit links; link on a model without links: "This model has no Revit links."; get_project_info baseline counts, hasUnsavedChanges false |
+
+Not covered live: a link that is not loaded (needs link unload, a later phase-6 item), a tilted or mirrored link,
+Revit 2027.
+
 
 ## 2026-11-23 · Version 0.14.0 (installer package)
 

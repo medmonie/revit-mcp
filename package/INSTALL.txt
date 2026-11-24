@@ -4,7 +4,9 @@ Needed on this PC: Autodesk Revit 2024 and/or 2027, and an MCP client (Claude De
 Nothing else: the package includes the MCP server as one exe. Python and the .NET SDK are only for building from source.
 
 1. Close Revit.
-2. Unzip RevitMcp.zip and double-click install.bat. It
+2. Unzip RevitMcp.zip and double-click install.bat as the Windows user who runs Revit (no "Run as administrator":
+   it needs no admin rights, and an elevated window running as another account would install into that account's
+   profile; install.bat stops when the two differ, install.bat /this_user overrides). It
    - installs the add-in for each Revit it finds (%APPDATA%\Autodesk\Revit\Addins\<year>\),
    - installs the server: %LOCALAPPDATA%\RevitMcpBridge\revit-mcp-server.exe,
    - adds "revit" to Claude Desktop (claude_desktop_config.json) and Codex (~/.codex/config.toml), keeping your

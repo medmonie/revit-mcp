@@ -52,22 +52,44 @@ internal static class Describe
     }
 
     /// <summary>Insertion point or end points, in request units; null for elements without a simple location.</summary>
-    public static object Location(Element e)
+    /// <param name="tf">Optional transform into the reported coordinates (an element of a linked model shown in the host).</param>
+    public static object Location(Element e, Transform tf = null)
     {
+        bool moved = tf != null && !tf.IsIdentity;
         if (e.Location is LocationPoint lp)
         {
-            var o = new Obj { ["point"] = U.Xyz(lp.Point) };
-            try { if (Math.Abs(lp.Rotation) > 1e-9) o["rotationDeg"] = U.Deg(lp.Rotation); } catch { /* some families have no rotation */ }
+            var o = new Obj { ["point"] = U.Xyz(moved ? tf.OfPoint(lp.Point) : lp.Point) };
+            double rot = 0;
+            try { rot = lp.Rotation; } catch { /* some families have no rotation */ }
+            if (moved)
+            {
+                rot += Math.Atan2(tf.BasisX.Y, tf.BasisX.X);
+                rot -= 2 * Math.PI * Math.Floor(rot / (2 * Math.PI));   // 0 .. 360 degrees, as Revit reports it
+                if (2 * Math.PI - rot < 1e-9) rot = 0;
+            }
+            if (Math.Abs(rot) > 1e-9) o["rotationDeg"] = U.Deg(rot);
             return o;
         }
-        if (e.Location is LocationCurve lc && lc.Curve != null && lc.Curve.IsBound) return U.CurveOut(lc.Curve);
+        if (e.Location is LocationCurve lc && lc.Curve != null && lc.Curve.IsBound)
+            return U.CurveOut(moved ? lc.Curve.CreateTransformed(tf) : lc.Curve);
         return null;
     }
 
-    public static object Box(Element e)
+    public static object Box(Element e, Transform tf = null)
     {
         var b = e.get_BoundingBox(null);
-        return b == null ? null : new Obj { ["min"] = U.Xyz(b.Min), ["max"] = U.Xyz(b.Max) };
+        if (b == null) return null;
+        if (tf == null || tf.IsIdentity) return new Obj { ["min"] = U.Xyz(b.Min), ["max"] = U.Xyz(b.Max) };
+        // The box's own transform (usually identity) then the link's; report the axis-aligned box of the eight corners.
+        var full = b.Transform == null ? tf : tf.Multiply(b.Transform);
+        var pts = new List<XYZ>();
+        foreach (double x in new[] { b.Min.X, b.Max.X })
+            foreach (double y in new[] { b.Min.Y, b.Max.Y })
+                foreach (double z in new[] { b.Min.Z, b.Max.Z })
+                    pts.Add(full.OfPoint(new XYZ(x, y, z)));
+        var min = new XYZ(pts.Min(q => q.X), pts.Min(q => q.Y), pts.Min(q => q.Z));
+        var max = new XYZ(pts.Max(q => q.X), pts.Max(q => q.Y), pts.Max(q => q.Z));
+        return new Obj { ["min"] = U.Xyz(min), ["max"] = U.Xyz(max) };
     }
 
     // ---------------------------------------------------------------- parameter values

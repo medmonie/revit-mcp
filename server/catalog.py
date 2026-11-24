@@ -9,7 +9,7 @@ The groups mirror the add-in sources: plugin/Read/<Group>Read.cs and plugin/Edit
 """
 from __future__ import annotations
 
-BRIDGE_VERSION = "0.14.0"   # keep plugin/BridgeInfo.cs in step; the tests check it
+BRIDGE_VERSION = "0.17.0"   # keep plugin/BridgeInfo.cs in step; the tests check it
 
 Entry = tuple[str, dict[str, str]]
 Group = dict[str, Entry]
@@ -29,6 +29,8 @@ FOLDER = "full path of the output folder (created if missing)"
 OVERWRITE = "default false: an existing file makes the batch fail"
 SCOPE = {"view?": "only elements visible in this view", "level?": "only elements on this level"}
 CAD_ID = "id of the CAD file from list_links"
+LINK = {"link?": "read inside this loaded Revit link: instance id, link type id or file name from list_links",
+        "coordinates?": "with link: host (default, the link transform applied) | link (the linked model's own coordinates)"}
 OVERRIDES = {"color?": "\"#RRGGBB\", [r, g, b] or a name (red, blue ...)", "fill?": "default false: solid fill in the colour",
              "line_weight?": "1-16", "halftone?": "bool", "transparency?": "0-100"}
 COLUMN_LAYER = "the column layer (see get_cad_geometry layers_only), e.g. S-COLS"
@@ -42,37 +44,44 @@ READ_GROUPS: dict[str, Group] = {
         "ping": ("Connection check with Revit version, active model and view, documentId for the edit target, and edit permission.", {}),
         "get_project_info": ("Active model: title, path, workshared / read-only, project information, phases, "
                              "counts of structural elements, open models.", {}),
-        "list_levels": ("Levels with project-relative elevation and Revit's displayElevation, sorted by project elevation.", {}),
-        "list_grids": ("Grids with their end points (and mid point and radius for arc grids).", {"limit?": "default 500"}),
+        "list_levels": ("Levels with project-relative elevation and Revit's displayElevation, sorted by project elevation; "
+                        "with link, the linked model's levels (elevation in the reported coordinates and linkElevation).", {**LINK}),
+        "list_grids": ("Grids with their end points (and mid point and radius for arc grids); with link, the linked model's grids.",
+                       {"limit?": "default 500", **LINK}),
         "list_views": ("Views (not templates, not sheets): name, type, level, scale.",
                        {"type?": "e.g. FloorPlan, EngineeringPlan, ThreeD, Section, Elevation, Schedule, DraftingView", "limit?": "default 200"}),
         "list_sheets": ("Sheets: number, name, the views placed on them.", {"limit?": "default 500"}),
         "count_by_category": ("Number of model elements per category, largest first.",
-                              {"view?": "only elements visible in this view", "include_annotation?": "default false"}),
+                              {"view?": "only elements visible in this view (a host view, also with link)", "include_annotation?": "default false",
+                               "link?": LINK["link?"]}),
         "list_types": ("Types of a category (family, type, id) with the number of instances of each. "
-                       "Use these names for the 'type' parameter of edit operations.", {"category": CATEGORY, "limit?": "default 300"}),
+                       "Use these names for the 'type' parameter of edit operations.",
+                       {"category": CATEGORY, "limit?": "default 300", "link?": LINK["link?"]}),
         "list_materials": ("Materials: name, class.", {"limit?": "default 300"}),
         "list_warnings": ("Revit's own warnings (overlaps, duplicates, joins ...) with the elements involved, and a count per message.",
                           {"limit?": "default 100"}),
     },
     "Elements": {
         "get_elements": ("Elements of one or more categories (or by id): id, family, type, level, location (point or end points) "
-                         "and any parameters you name.",
+                         "and any parameters you name. With link: the elements of a linked Revit model (their own ids, types and levels), "
+                         "located in host coordinates through the link transform.",
                          {"category?": "one category or a list (required without element references): " + CATEGORY, "ids?": IDS,
                           "unique_ids?": "list of element UniqueIds instead of ids", "allow_missing?": "default false; true reports missing references",
-                          "type?": TYPE, "level?": LEVEL, "view?": "only elements visible in this view",
+                          "type?": TYPE, "level?": LEVEL, "view?": "only elements visible in this view (a host view, also with link)",
                           "params?": "names or bip:/guid:/id: selectors (instance first, then type)",
                           "parameter_details?": "include each requested parameter's stable key, type, scope and writability",
                           "location?": "default true", "box?": "bounding box, default false", "limit?": "default 100",
-                          "after_id?": "nextAfterId from the previous page, with the same filters"}),
+                          "after_id?": "nextAfterId from the previous page, with the same filters", **LINK}),
         "get_element": ("Element geometry and parameter details, including same-name parameters and their stable keys.",
-                        {"id": "element id", "include_type?": "default true"}),
+                        {"id": "element id (in the link when link is given)", "include_type?": "default true", **LINK}),
         "get_selection": ("The elements the user has selected in Revit.", {"params?": "parameter names to include", "limit?": "default 200"}),
         "show_elements": ("Select elements in Revit and zoom to them (changes only what the user sees, not the model).",
                           {"ids": IDS, "select?": "default true", "zoom?": "default true"}),
     },
     "Links and CAD": {
-        "list_links": ("Revit links (file, status) and linked / imported CAD files (file, linked or imported, view).", {}),
+        "list_links": ("Revit links (file, status, path, loaded document, transform: origin and plan rotation) and linked / imported "
+                       "CAD files (file, linked or imported, view). Read inside a loaded link with the link parameter of get_elements, "
+                       "get_element, count_by_category, list_types, list_levels and list_grids.", {}),
         "get_cad_geometry": ("Lines, arcs, circles and polylines inside a linked / imported DWG or DXF, by layer, in model coordinates. "
                              "Call with layers_only first, then read one layer (e.g. the grid or column layer) to model from it.",
                              {"id": CAD_ID, "layer?": "only this layer",
@@ -154,6 +163,30 @@ READ_GROUPS: dict[str, Group] = {
                             "model?": "title of another model open in this Revit (e.g. a detail library); default the active model",
                             "limit?": "per kind, default 300"}),
     },
+    "Groups, assemblies and geometry": {
+        "list_groups": ("Model and detail group types: instances, members and their categories, instance ids.",
+                        {"kind?": "all (default) | model | detail", "limit?": "default 200"}),
+        "list_assemblies": ("Assemblies: name, naming category, members by category, centre, and the assembly views made for each.",
+                            {"limit?": "default 200"}),
+        "get_geometry": ("Raw geometry of one element: each solid (volume, surface area, centroid, box, faces with kind, area, normal / axis), "
+                         "free curves, meshes; as modelled (after joins and cuts) or the family's original shape.",
+                         {"id": "element id (in the link when link is given)", "detail?": "coarse | medium | fine (default)",
+                          "original?": "family instances: default false; true = geometry before joins and cuts",
+                          "faces?": "default true: list the faces", "edges?": "default false: total edge length per solid",
+                          "include_hidden?": "default false", "limit?": "faces listed, default 200", **LINK}),
+    },
+    "Standards and data": {
+        "list_global_parameters": ("Global parameters: name, spec, value (lengths in request units, m2, m3, degrees), formula, reporting, "
+                                   "driven by a dimension, number of elements it drives.", {"limit?": "default 300"}),
+        "get_material": ("One material in full: identity, graphics (shading colour, patterns), structural asset (density kg/m3, E, G in MPa, "
+                         "Poisson, thermal expansion 1/C, concrete f'c or steel yield / tensile in MPa), thermal asset (W/(m K), J/(kg C)), "
+                         "appearance asset and its colour, and the other materials sharing each asset.",
+                         {"material": "material name or id"}),
+        "list_keynotes": ("Keynote file (path and entries) and assembly code table, and the keynote / assembly code of each type in use, "
+                          "with the keynote text and the counts of types missing them.",
+                          {"category?": CATEGORIES, "used_only?": "default true: only types with instances",
+                           "entries_limit?": "keynote entries listed, default 100", "limit?": "types listed, default 300"}),
+    },
     "Meta": {
         "family_inspect": ("Look inside a loaded family (opened in memory, never saved): its parameters (instance / type, formula), solids with "
                            "their material and the parameter it is linked to, nested families.", {"family": "family name"}),
@@ -193,9 +226,9 @@ LOCAL_ACTIONS: Group = {
                        "workbook, in ONE edit batch.", {"path": "the filled .xlsx", "dry_run?": "default false",
                        "document_id?": "documentId from ping: refuse if another model is active",
                        "operation_id?": "request ID (generated when omitted)"}),
-    "list_revit_sessions": ("Every running Revit with the add-in: pid, version, active model, whether it answers, which one is selected.", {}),
+    "list_revit_sessions": ("Every running Revit with the add-in: pid, version, active model, whether it answers, which one is selected and which is the default. With several open, edits need select_revit first.", {}),
     "select_revit": ("Send all following calls to one Revit (e.g. 2027 while 2024 is also open).",
-                     {"pid?": "process id from list_revit_sessions, or 'auto' for the most recent Revit", "revit?": "version, e.g. '2027', when only one of it runs"}),
+                     {"pid?": "process id from list_revit_sessions, or 'auto' (the only open Revit; with several, the default one for reads, and edits are refused)", "revit?": "version, e.g. '2027', when only one of it runs"}),
 }
 
 # --------------------------------------------------------------------------- edit operations (inside action 'edit')
@@ -289,6 +322,31 @@ EDIT_GROUPS: dict[str, Group] = {
         "type_duplicate": ("Duplicate a type under a new name and optionally set its parameters (e.g. a 300x700 beam from a 300x600 one).",
                            {"type": TYPE, "new_name": "", "category?": CATEGORY, "values?": "{\"Parameter name\": value, ...}"}),
         "family_load": ("Load a family file (.rfa) into the model; returns its types.", {"path": "full path of the .rfa"}),
+        "flip": ("Flip family instances (facing, hand or work plane) or walls (orientation), as the family allows; others are listed as skipped.",
+                 {"ids": IDS, "what": "facing | hand | work_plane | wall"}),
+        "end_join": ("Allow or disallow joins at the start / end of walls and structural framing; framing can also get an end extension "
+                     "(the length you give, beyond that end).",
+                     {"ids": IDS, "end": "start | end | both", "allow?": "true / false", "extension?": "framing: length beyond the end (request units)"}),
+        "family_place_hosted": ("Place face-based or work-plane-based families (other kinds are refused: use family_place): on a face of a host element (the face nearest each point, "
+                                "or the top / bottom / side faces) or on a level / named reference plane.",
+                                {"type": TYPE, "category": CATEGORY, "points": "list of " + XYZ + " (projected onto the face / plane)",
+                                 "host?": "element id whose face carries them", "face?": "nearest (default) | top | bottom | side",
+                                 "work_plane?": "level name or named reference plane (instead of host)",
+                                 "direction?": XYZ + " the family's reference direction; default x"}),
+    },
+    "Groups and assemblies": {
+        "group_create": ("Make a model or detail group from elements.", {"ids": IDS, "name?": "group type name; default Revit's"}),
+        "group_place": ("Place instances of a model group type at points.", {"group": "group type name or id (list_groups)", "points": "list of " + XYZ}),
+        "ungroup": ("Ungroup group instances (the members stay; the group type stays until purged).", {"ids": "group instance ids"}),
+        "assembly_create": ("Make an assembly from elements. The name is applied right after the commit (Revit creates the assembly type then), "
+                            "so a dry run does not show it; make its views with assembly_views in a later edit.",
+                            {"ids": IDS, "name?": "assembly type name; default Revit's", "naming_category?": "default the first element's category"}),
+        "assembly_views": ("Create assembly views of an existing assembly: 3D, elevations / detail sections, parts list, material take-off, "
+                           "and optionally an assembly sheet. The assembly must exist before the batch (create it in an earlier edit).",
+                           {"assembly": "assembly name or instance id (list_assemblies)",
+                            "views": "list of 3d | top | bottom | left | right | front | back | DetailSectionA | DetailSectionB | "
+                                     "HorizontalDetail | parts_list | material_takeoff",
+                            "sheet_title_block?": "title-block type: also create an assembly sheet"}),
     },
     "Views, sheets and annotation": {
         "view_plan_create": ("Create a plan view of a level.", {"level": LEVEL, "kind?": "structural (default) | floor | ceiling", "name?": ""}),
@@ -390,6 +448,29 @@ EDIT_GROUPS: dict[str, Group] = {
                             {"description": "", "date?": "", "issued_by?": "", "issued_to?": "", "issued?": "bool", "sheets?": "sheet numbers"}),
         "revision_cloud_create": ("Draw a revision cloud in a view.",
                                   {"revision": "revision description, number or sequence", "boundary": "list of " + XY + " corners", "view?": VIEW}),
+        "schedule_set": ("Change a schedule: filters, sorting / grouping (headers, footers, blank lines), itemize, grand total, title / headers, "
+                         "and per field the heading, hidden, alignment, totals and number format. Filters and sort replace the existing ones.",
+                         {"schedule": "schedule name or id",
+                          "filters?": "list (max 8) of {field, op?: equals (default) | not_equals | greater | greater_or_equal | less | less_or_equal | "
+                                      "contains | not_contains | begins_with | not_begins_with | ends_with | not_ends_with | has_value | has_no_value, "
+                                      "value: number (lengths in request units, m2, m3, degrees) or text}; [] clears",
+                          "sort?": "list of {field, order?: ascending | descending, header?, footer?, footer_count? (needs footer), blank_line?}; [] clears",
+                          "itemize?": "bool", "grand_total?": "bool", "show_title?": "bool", "show_headers?": "bool",
+                          "fields?": "{field name: {heading?, hidden?, align?: left | center | right, total?: bool, unit?: mm | cm | m | m2 | m3 | "
+                                     "kg | deg ..., decimals?}}"}),
+        "dimension_rotated": ("A linear dimension chain along any plan direction: through the outer faces of each element square to it, "
+                              "and the grids across it, placed beyond the elements.",
+                              {"ids": IDS, "angle": "direction measured along, degrees from x", "view?": VIEW,
+                               "offset?": "distance of the dimension line beyond the elements; default 1500 mm", "include_grids?": "default true"}),
+        "dimension_angular": ("An angular dimension between two straight grids, reference planes or model / detail lines, centred on their intersection.",
+                              {"between": "two grid names, reference plane names or line ids", "view?": VIEW + " (plan or drafting)",
+                               "radius?": "arc radius; default 1000 mm", "type?": "angular dimension type; default the first one"}),
+        "dimension_radial": ("Radius or diameter dimensions on arc grids, arc model / detail lines, or the curved face of walls / beams. Revit 2027 "
+                             "only (the 2024 API cannot create them).",
+                             {"ids": IDS, "diameter?": "default false (radius)", "view?": VIEW}),
+        "spot_coordinate": ("Spot coordinates (N / E) on the top face of elements; the values follow the spot type's base (project or survey point). "
+                            "Spot slopes cannot be created through the Revit API.",
+                            {"ids": IDS, "point?": XY + " where to place it (default the face centre)", "leader?": "default true", "view?": VIEW}),
         "sheet_layout": ("Place several views, legends and schedules on one sheet, arranged in rows inside the sheet area.",
                          {"sheet": "sheet number or name", "views": "view, legend or schedule names, in reading order",
                           "columns?": "items per row; default about the square root of the count",
@@ -397,38 +478,45 @@ EDIT_GROUPS: dict[str, Group] = {
                           "margin?": "paper mm, default 20", "gap?": "paper mm between items, default 15"}),
     },
     "Reinforcement": {
-        "rebar_column": ("Reinforce structural columns: longitudinal bars on all faces (corners included) and closed ties, closer at both ends. "
-                         "Bars continue above for the lap when a column is above, bend inward at the top otherwise, and stand on the footing mesh with "
-                         "feet when the column sits on a footing.",
+        "rebar_column": ("Reinforce structural columns with the engineer's values: longitudinal bars on all faces (corners included) and closed "
+                         "ties. No design and no defaults: counts, spacings, cover, lap and bend lengths are required; the operation only fits "
+                         "them to the column's geometry and reports what it had to shorten.",
                          {"ids": IDS, "bar": "bar type name or diameter in mm (e.g. 20)", "tie": "tie bar type or diameter",
-                          "bars_x?": "bars on each face along the column's local x, corners included; default 3",
-                          "bars_y?": "bars on each face along local y, corners included; default 3",
-                          "tie_spacing?": "default 200 mm", "cover?": "to the tie's outer face; default 40 mm",
-                          "end_zone?": "length of the closer tie spacing at each end; default the larger of the long side, height / 6, 450 mm; 0 = none",
-                          "end_spacing?": "tie spacing in the end zones; default the smaller of tie_spacing and 100 mm",
-                          "top?": "auto (default: lap if a column is above, else bend) | lap | bend | none",
-                          "bottom?": "auto (default: footing if a foundation is below) | footing | none",
-                          "lap_d?": "lap length in bar diameters; default 50", "footing_cover?": "default 50 mm"}),
-        "rebar_beam": ("Reinforce straight, level beams: bottom and top bars anchored into the supports (straight if the support is deep "
-                       "enough, else with a 90 degree bend; lapped into the next span in line), stirrups closer near the supports, and bars "
-                       "longer than the stock length split with laps.",
-                       {"ids": IDS, "bottom_bar": "bar type or diameter", "bottom_count?": "default 3", "top_bar?": "default the bottom bar",
-                        "top_count?": "default 2", "stirrup": "bar type or diameter", "stirrup_spacing?": "default 150 mm",
-                        "cover?": "to the stirrup's outer face; default 40 mm",
-                        "ends?": "anchor (default) | none (bars stop at cover inside the beam)",
-                        "anchorage_d?": "anchorage length in bar diameters; default 40", "lap_d?": "lap length in bar diameters; default 50",
-                        "end_zone?": "length of closer stirrups at each end; default 2 x beam depth; 0 = none",
-                        "end_spacing?": "stirrup spacing in the end zones; default the smaller of stirrup_spacing and 100 mm",
-                        "stock_length?": "longest bar before a lap; default 12000 mm"}),
-        "rebar_footing": ("Reinforce isolated footings (and pile caps): bottom mesh both ways, optional top mesh, optional bottom bars "
-                          "turned up at the edges.",
-                          {"ids": IDS, "bar": "bar type or diameter", "spacing?": "default 200 mm", "cover?": "default 50 mm",
-                           "top?": "default false", "top_bar?": "default the bottom bar", "top_spacing?": "default the bottom spacing",
-                           "end_bends?": "bool; bottom bars turned up at the edges (U bars); default false",
-                           "bend_leg?": "longest turned-up leg; default up to under the top mesh",
-                           "lap_d?": "lap length in bar diameters; default 50", "stock_length?": "default 12000 mm"}),
-        "rebar_area": ("Area reinforcement in slabs: one bar type at a spacing, bottom, top or both layers, both directions.",
-                       {"ids": "slab ids", "bar": "bar type or diameter", "spacing?": "default 200 mm", "layers?": "bottom | top | both (default)",
+                          "bars_x": "bars on each face along the column's local x, corners included",
+                          "bars_y": "bars on each face along local y, corners included",
+                          "tie_spacing": "tie spacing", "cover": "to the tie's outer face",
+                          "top": "lap (bars continue above) | bend (bent inward) | none (stop at cover) | auto (lap where a column is above, else bend)",
+                          "bottom": "footing (stand on the footing mesh with feet) | none | auto (footing where a foundation is below)",
+                          "lap_d": "lap length in bar diameters; required for top lap / auto",
+                          "bend_leg": "length of the inward top bend; required for top bend / auto",
+                          "footing_cover": "footing bottom cover; required for bottom footing / auto",
+                          "foot_length": "length of the outward feet on the footing mesh; required for bottom footing / auto",
+                          "end_zone?": "length of closer tie spacing at each end; leave out for uniform ties",
+                          "end_spacing?": "tie spacing in the end zones; required with end_zone",
+                          "starter_tie_spacing?": "ties inside the footing at this spacing; leave out for none"}),
+        "rebar_beam": ("Reinforce straight, level beams with the engineer's values: bottom and top bars, ends anchored into the supports "
+                       "(straight when the anchorage fits, else to the far face with the given 90 degree bend; lapped into the next span in "
+                       "line), closed stirrups. No design and no defaults; anchorage that does not fit straight is reported for checking.",
+                       {"ids": IDS, "bottom_bar": "bar type or diameter", "bottom_count": "number of bottom bars", "top_bar": "bar type or diameter",
+                        "top_count": "number of top bars", "stirrup": "bar type or diameter", "stirrup_spacing": "stirrup spacing",
+                        "cover": "to the stirrup's outer face",
+                        "ends": "anchor (into the supports) | none (bars stop at cover inside the beam)",
+                        "anchorage_d": "anchorage length in bar diameters; required for ends anchor",
+                        "bend_leg": "90 degree bend length where the anchorage does not fit straight, and at corners; required for ends anchor",
+                        "lap_d": "lap length in bar diameters; required for ends anchor or with stock_length",
+                        "end_zone?": "length of closer stirrups at each end; leave out for uniform stirrups",
+                        "end_spacing?": "stirrup spacing in the end zones; required with end_zone",
+                        "stock_length?": "longest bar before a lap; leave out to model each bar line in one piece"}),
+        "rebar_footing": ("Reinforce isolated footings (and pile caps) with the engineer's values: bottom mesh both ways, optional top mesh, "
+                          "optional bottom bars turned up at the edges. No design and no defaults.",
+                          {"ids": IDS, "bar": "bar type or diameter", "spacing": "bottom mesh spacing", "cover": "cover to the mesh",
+                           "top?": "bool; add a top mesh", "top_bar?": "required with top", "top_spacing?": "required with top",
+                           "end_bends?": "bool; bottom bars turned up at the edges (U bars)",
+                           "bend_leg?": "turned-up leg length; leave out to turn up to under the top mesh or top cover",
+                           "stock_length?": "longest bar before a lap; leave out to model each bar in one piece",
+                           "lap_d?": "lap length in bar diameters; required with stock_length"}),
+        "rebar_area": ("Area reinforcement in slabs with the engineer's values: one bar type at a spacing, both directions, in the given layers.",
+                       {"ids": "slab ids", "bar": "bar type or diameter", "spacing": "bar spacing", "layers": "bottom | top | both",
                         "direction?": XY + " major direction; default x", "boundary?": "list of " + XY + " corners; default the slab outline"}),
     },
     "Modelling": {
@@ -438,7 +526,7 @@ EDIT_GROUPS: dict[str, Group] = {
                         "tolerance?": "default 50 mm", "reset?": "bool"}),
         "beam_system_create": ("Create a beam system (joists at a fixed spacing) inside a boundary on a level.",
                                {"level": LEVEL, "type": TYPE + " of framing", "boundary": "list of " + XY + " corners",
-                                "direction?": XY + " beam direction; default x", "spacing?": "default 1500 mm",
+                                "direction?": XY + " beam direction; default x", "spacing": "joist spacing (design input, no default)",
                                 "justification?": "center (default) | beginning | end | directionline"}),
         "brace_create": ("Create braces (structural framing set as brace) between 3D points.",
                          {"type": TYPE + " of framing", "level": LEVEL + " (reference level)",
@@ -544,9 +632,30 @@ EDIT_GROUPS: dict[str, Group] = {
                       {"ids": IDS, "created?": "phase name", "demolished?": "phase name, or 'none' to clear"}),
     },
     "Warnings": {
-        "fix_warnings": ("Fix Revit warnings that have one safe fix: 'joined but do not intersect' pairs are unjoined (no quantity change). "
-                         "Every other warning is listed under notFixed, by message, to review.",
-                         {"kinds?": "default all fixable kinds: joined_disjoint", "ids?": "only warnings involving these elements"}),
+        "fix_warnings": ("Fix Revit warnings that have one safe fix: 'joined but do not intersect' pairs are unjoined (no quantity change; the default). "
+                         "When named in kinds: identical instances in the same place (copies deleted, lowest id kept) and overlapping lines "
+                         "(a line lying within another is deleted). Every other warning is listed under notFixed, by message, to review.",
+                         {"kinds?": "joined_disjoint (default) | duplicate_instances | overlapping_lines (list)", "ids?": "only warnings involving these elements"}),
+    },
+    "Standards and data": {
+        "global_parameter_create": ("Create a global parameter, with the value or formula you give.",
+                                    {"name": "", "spec": "length | area | volume | angle | number | integer | text | yes_no | material",
+                                     "value?": "lengths in request units, m2, m3, degrees, true / false, material name, text",
+                                     "formula?": "a Revit formula instead of a value", "reporting?": "bool",
+                                     "if_exists?": "fail (default) | update"}),
+        "global_parameter_set": ("Set a global parameter's value, formula or reporting state.",
+                                 {"name": "", "value?": "as for global_parameter_create", "formula?": "", "reporting?": "bool"}),
+        "global_parameter_associate": ("Drive an element (or type) parameter by a global parameter, or clear the association.",
+                                       {"name?": "global parameter (not needed with clear)", "ids": IDS, "parameter": "parameter name on the elements",
+                                        "target?": "instance (default) | type", "clear?": "true removes the association"}),
+        "material_asset_set": ("Set a material's structural / thermal asset values and appearance colour from the values you give. An asset "
+                               "shared with other materials is copied into a new asset for this one unless change_shared is true.",
+                               {"material": "material name or id",
+                                "structural?": "{density kg/m3, young_modulus MPa, shear_modulus MPa, poisson_ratio, thermal_expansion 1/C, "
+                                               "concrete_compression MPa, yield_stress MPa, tensile_strength MPa, lightweight}",
+                                "thermal?": "{conductivity W/(m K), specific_heat J/(kg C), density kg/m3, emissivity, porosity, reflectivity}",
+                                "appearance?": "{color (render colour, Generic assets), shading_color, transparency 0-100}",
+                                "change_shared?": "default false"}),
     },
     "Openings": {
         "opening_create": ("Cut an opening in a slab or roof (rectangle/polygon or circle), a sleeve through a beam web or a hole through its top, or a rectangular opening in a wall.",
@@ -577,6 +686,15 @@ EDIT_GROUPS: dict[str, Group] = {
                         "name_template?": NAME_TEMPLATE}),
         "export_nwc": ("Export to Navisworks (.nwc); needs the Navisworks exporter installed.", {**EXPORT, "view?": "a 3D view; default: the whole model"}),
         "export_image": ("Export views to PNG images.", {**EXPORT, "views?": VIEWS, "width_px?": "default 2000"}),
+        "export_dwf": ("Export views / sheets to DWF: one merged file, or one file per view named by name_template.",
+                       {**EXPORT, "views?": VIEWS, "sheets?": SHEETS, "merged?": "default true", "name_template?": NAME_TEMPLATE}),
+        "export_fbx": ("Export a 3D view to FBX.", {**EXPORT, "view?": "a 3D view; default the active view"}),
+        "export_gbxml": ("Export the model to gbXML from its building elements with the model's Energy Settings; an energy analysis model it needs "
+                         "is made for the export and rolled back (the model is not changed).", {**EXPORT}),
+        "export_dgn": ("Export views / sheets to DGN, one file per view.",
+                       {"folder": FOLDER, "overwrite?": OVERWRITE, "views?": VIEWS, "sheets?": SHEETS, "name_template?": NAME_TEMPLATE,
+                        "setup?": "a DGN export setup saved in the model; default: Revit's defaults, then the model's setups (the one used is reported)",
+                        "seed?": "full path of a .dgn seed file (needed when the model has no DGN setup and Revit's defaults fail)"}),
         "export_schedule": ("Export a schedule to CSV.", {"schedule": "schedule name or id", "folder": FOLDER, "name?": "default: the schedule name", "overwrite?": OVERWRITE}),
         "save": ("Save the model.", {}),
         "save_as": ("Save the model under a new path (not for workshared models).", {"path": "full path ending in .rvt", "overwrite?": OVERWRITE}),
@@ -608,6 +726,12 @@ UNITS_NOTE = (
     "rebar weight kg, angles degrees. Coordinates are relative to the Revit internal origin; z defaults to the level."
 )
 
+NO_DESIGN_NOTE = (
+    "NO DESIGN: this tool models, reads and documents; it never designs. Engineering values (bar counts, spacings, cover, "
+    "anchorage, laps, bend lengths, end zones, joist spacing, member sizes) come from the user or their design; never invent "
+    "them or apply a design code. If one is missing, ask the user for it."
+)
+
 
 def _signatures(groups: dict[str, Group]) -> list[str]:
     """One heading per group, one line per entry: '- name(param, param?): summary'."""
@@ -627,6 +751,7 @@ def tool_description(mode: str = "all") -> str:
                    "Reading never changes anything. Parameters ending in ? are optional. action='help' returns every "
                    "parameter description.")
         out.append(UNITS_NOTE)
+        out.append(NO_DESIGN_NOTE)
         out.append("\nREAD ACTIONS")
         out += _signatures(READ_GROUPS)
         out += _signatures({"Help": {k: v for k, v in LOCAL_ACTIONS.items()
@@ -634,6 +759,7 @@ def tool_description(mode: str = "all") -> str:
     if mode in ("all", "edit"):
         if mode == "edit":
             out.append(UNITS_NOTE)
+            out.append(NO_DESIGN_NOTE)
         out.append("\nEDIT ACTION\n- edit(" + ", ".join(EDIT_PARAMS) + "): " + EDIT_ACTION)
         if mode == "edit":
             out += _signatures({"Excel edits (pass name as excel_action)": {
@@ -653,7 +779,7 @@ def help_data(topic: str | None = None) -> dict:
 
     edit = {"summary": EDIT_ACTION, "params": EDIT_PARAMS}
     if topic is None:
-        return {"units": UNITS_NOTE, "readActions": full(READ_ACTIONS), "localActions": full(LOCAL_ACTIONS),
+        return {"units": UNITS_NOTE, "noDesign": NO_DESIGN_NOTE, "readActions": full(READ_ACTIONS), "localActions": full(LOCAL_ACTIONS),
                 "edit": edit, "editOperations": full(EDIT_OPS)}
     if topic == "edit":
         return {"edit": {**edit, "operations": full(EDIT_OPS)}}

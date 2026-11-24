@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
 import catalog  # noqa: E402
 
 TOKEN = secrets.token_hex(16)
+REVIT = os.environ.get("FAKE_REVIT", "2027")
 STATE = {"editingAllowed": False, "edits": 0}
 DOCUMENT_ID = "fake-session:fake-model"
 MODEL_KEY = "fake-model"
@@ -57,7 +58,7 @@ def handle(method: str, params: dict):
         RECEIPTS[op_id] = (params, receipt)
         return receipt
     if method == "ping":
-        return {"bridgeVersion": catalog.BRIDGE_VERSION, "revitVersion": "2027", "activeModel": "Fake.rvt",
+        return {"bridgeVersion": catalog.BRIDGE_VERSION, "revitVersion": REVIT, "activeModel": os.environ.get("FAKE_MODEL", "Fake.rvt"),
                 "editingAllowed": STATE["editingAllowed"], "documentId": DOCUMENT_ID, "modelKey": MODEL_KEY}
     if method == "list_actions":
         return {"bridgeVersion": catalog.BRIDGE_VERSION, "revitVersion": "2027",
@@ -168,9 +169,10 @@ def main() -> None:
     with Server(("127.0.0.1", 0), Handler) as srv:
         port = srv.server_address[1]
         target.parent.mkdir(parents=True, exist_ok=True)
-        info = json.dumps({"port": port, "token": TOKEN, "pid": os.getpid(), "revit": "2027",
+        info = json.dumps({"port": port, "token": TOKEN, "pid": os.getpid(), "revit": REVIT,
                            "protocol": int(os.environ.get("FAKE_PROTOCOL", "4"))})
-        target.write_text(info, encoding="utf-8")
+        if os.environ.get("FAKE_DEFAULT", "1") == "1":   # FAKE_DEFAULT=0: a second Revit, not the default one
+            target.write_text(info, encoding="utf-8")
         session = target.parent / "sessions" / f"{os.getpid()}.json"   # like the add-in: one file per Revit
         session.parent.mkdir(parents=True, exist_ok=True)
         session.write_text(info, encoding="utf-8")

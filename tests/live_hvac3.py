@@ -209,7 +209,7 @@ if s2 is not None:
 
 # --- leave: Task 04 active, the HVAC copy closed without saving
 call("model_open", {"path": TASK04, "activate": True}, timeout=900)
-cl = call("model_close", {"document_id": hv_id})
+cl = call("model_close", {"document_id": hv_id, "discard_changes": True})
 out("model_close HV (changes discarded)", cl)
 check("HV copy closed without saving", cl.get("discardedChanges") is True)
 print("\nSKIPPED: " + "; ".join(SKIPPED) if SKIPPED else "\nSKIPPED: none", flush=True)

@@ -18,6 +18,8 @@ internal static class DepthOps
         ops["assembly_create"] = AssemblyCreate;
         ops["assembly_views"] = AssemblyViews;
         ops["schedule_set"] = ScheduleSet;
+        ops["schedule_key_create"] = ScheduleKeyCreate;
+        ops["schedule_key_assign"] = ScheduleKeyAssign;
         ops["dimension_rotated"] = DimensionRotated;
         ops["dimension_angular"] = DimensionAngular;
         ops["dimension_radial"] = DimensionRadial;
@@ -427,10 +429,81 @@ internal static class DepthOps
                     field.SetFormatOptions(fo);
                     changes.Add("format");
                 }
+                if (Has(f, "style"))
+                {
+                    var st = Sub(f, "style");
+                    var style = new TableCellStyle(field.GetStyle());
+                    var ov = style.GetCellStyleOverrideOptions();
+                    if (Bool(st, "bold") is bool bo) { style.IsFontBold = bo; ov.Bold = true; }
+                    if (Bool(st, "italic") is bool it) { style.IsFontItalic = it; ov.Italics = true; }
+                    if (Bool(st, "underline") is bool un) { style.IsFontUnderline = un; ov.Underline = true; }
+                    if (Str(st, "color") is string col) { style.TextColor = Hex(col, "style.color"); ov.FontColor = true; }
+                    if (Str(st, "background") is string bg) { style.BackgroundColor = Hex(bg, "style.background"); ov.BackgroundColor = true; }
+                    if (Str(st, "font") is string font) { style.FontName = font; ov.Font = true; }
+                    if (Dbl(st, "size") is double size)
+                    {
+                        if (size < 4 || size > 72) throw new ArgumentException("style.size is the text size in points (4 to 72).");
+                        style.TextSize = size; ov.FontSize = true;
+                    }
+                    style.SetCellStyleOverrideOptions(ov);
+                    field.SetStyle(style);
+                    changes.Add("style");
+                }
                 done.Add($"{field.GetName()}: {string.Join(", ", changes)}");
             }
         }
-        if (done.Count == 0) throw new ArgumentException("schedule_set needs at least one of: filters, sort, itemize, grand_total, show_title, show_headers, fields.");
+        if (Has(p, "percentage"))
+        {
+            foreach (var pc in ObjList(p, "percentage", 10))
+            {
+                var of = FieldOf(def, NeedStr(pc, "of"));
+                ScheduleField pf;
+                try { pf = def.AddField(new SchedulableField(ScheduleFieldType.Percentage)); }
+                catch (Exception)   // Revit's own ArgumentException, not System's
+                {
+                    throw new ArgumentException("Percentage fields cannot be made through Revit's API in this Revit (it refuses the field type). Add it in Revit (Schedule Properties > Fields > Calculated Parameter > Percentage).");
+                }
+                pf.PercentageOf = of.FieldId;
+                if (Str(pc, "by") is string by)
+                {
+                    var byField = FieldOf(def, by);
+                    bool grouped = Enumerable.Range(0, def.GetSortGroupFieldCount()).Any(i => def.GetSortGroupField(i).FieldId == byField.FieldId);
+                    if (!grouped) throw new ArgumentException($"percentage 'by' must be a sort / group field of the schedule ('{by}' is not; add it with sort).");
+                    pf.PercentageBy = byField.FieldId;
+                }
+                if (Str(pc, "heading") is string ph) pf.ColumnHeading = ph;
+                done.Add($"percentage of {of.GetName()}" + (Str(pc, "by") is string b2 ? $" by {b2}" : ""));
+            }
+        }
+        if (Has(p, "split"))
+        {
+            if (schedule.IsSplit())
+            {
+                while (schedule.GetSegmentCount() > 1) schedule.MergeSegments(1, 0);
+            }
+            if (p["split"] is double parts)
+            {
+                int n = (int)parts;
+                if (n < 2 || n > 20 || n != parts) throw new ArgumentException("'split' is a whole number of parts (2 to 20), or a list of part heights on the sheet.");
+                schedule.Split(n);
+            }
+            else
+            {
+                var heights = Arr(p, "split", 20).Select((v, i) => U.In(Number(v, $"split height {i + 1}"))).ToList();
+                if (heights.Count < 1 || heights.Any(h => h <= 0)) throw new ArgumentException("'split' heights must be positive.");
+                schedule.Split(heights);
+            }
+            done.Add($"split into {schedule.GetSegmentCount()} parts");
+        }
+        else if (Bool(p, "unsplit") == true)
+        {
+            int was = schedule.GetSegmentCount();
+            while (schedule.GetSegmentCount() > 1) schedule.MergeSegments(1, 0);
+            done.Add($"joined ({was} parts to 1)");
+        }
+        if (Has(p, "calculated"))
+            throw new ArgumentException("Calculated fields with a formula cannot be made through Revit's API (Revit offers no way to set the formula). Add it in Revit (Schedule Properties > Fields > Calculated Parameter); percentage fields cannot be made through the API either.");
+        if (done.Count == 0) throw new ArgumentException("schedule_set needs at least one of: filters, sort, itemize, grand_total, show_title, show_headers, fields, percentage, split, unsplit.");
         return new { schedule = schedule.Name, changed = done };
     }
 
@@ -483,7 +556,7 @@ internal static class DepthOps
             throw new ArgumentException($"Found fewer than two faces square to {NeedDbl(p, "angle")} degrees (or grids across it); check the angle against the elements' orientation.");
         double line = maxAcross + U.LenMm(p, "offset", 1500);
         XYZ a = d * first + across * line + XYZ.BasisZ * z, b = d * last + across * line + XYZ.BasisZ * z;
-        var dim = doc.Create.NewDimension(view, Line.CreateBound(a, b), refs);
+        var dim = DocExtraOps.LinearDim(doc, p, view, Line.CreateBound(a, b), refs);
         return new { id = dim.Id.Value, view = view.Name, angle = NeedDbl(p, "angle"), references = refs.Size, length = U.Out(last - first),
                      note = "offset defaults to 1500 mm beyond the elements (a drawing convention)." };
     }
@@ -588,5 +661,126 @@ internal static class DepthOps
         if (made.Count == 0) throw new ArgumentException("No spot coordinate placed: " + string.Join("; ", skipped.Take(5)));
         return new { view = view.Name, created = made.Count, spots = made, skipped,
                      note = "Values shown follow the spot coordinate type (project base point or survey point)." };
+    }
+
+    private static Color Hex(string v, string what)
+    {
+        string h = v.Trim().TrimStart('#');
+        if (h.Length != 6 || !int.TryParse(h, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int rgb))
+            throw new ArgumentException($"'{what}' must be a colour like #1F4E79.");
+        return new Color((byte)(rgb >> 16), (byte)((rgb >> 8) & 0xFF), (byte)(rgb & 0xFF));
+    }
+
+    // ---------------------------------------------------------------- key schedules
+
+    private static ViewSchedule KeySchedule(Document doc, Obj p)
+    {
+        var s = Find.ViewOf(doc, NeedRef(p, "schedule")) as ViewSchedule ?? throw new ArgumentException("'schedule' is not a schedule. Use list_schedules.");
+        if (!s.Definition.IsKeySchedule) throw new ArgumentException($"'{s.Name}' is not a key schedule.");
+        return s;
+    }
+
+    private static List<Element> KeyRows(Document doc, ViewSchedule s) =>
+        new FilteredElementCollector(doc, s.Id).WhereElementIsNotElementType().ToElements().ToList();
+
+    private static string KeyName(Element e) => e.get_Parameter(BuiltInParameter.REF_TABLE_ELEM_NAME)?.AsString() ?? e.Name;
+
+    private static void SetKeyValue(Document doc, Element row, string field, object v)
+    {
+        var prm = row.LookupParameter(field) ?? throw new ArgumentException($"key '{KeyName(row)}': no field '{field}' in the key schedule.");
+        if (prm.IsReadOnly) throw new ArgumentException($"key '{KeyName(row)}': '{field}' is read-only.");
+        switch (prm.StorageType)
+        {
+            case StorageType.String: prm.Set(Convert.ToString(v, CultureInfo.InvariantCulture)); break;
+            case StorageType.Integer: prm.Set(v is bool b ? (b ? 1 : 0) : Convert.ToInt32(v, CultureInfo.InvariantCulture)); break;
+            case StorageType.Double:
+                var spec = prm.Definition.GetDataType();
+                double d = Convert.ToDouble(v, CultureInfo.InvariantCulture);
+                if (spec == SpecTypeId.Length) d = U.In(d);
+                else if (spec == SpecTypeId.Area) d = UnitUtils.ConvertToInternalUnits(d, UnitTypeId.SquareMeters);
+                else if (spec == SpecTypeId.Volume) d = UnitUtils.ConvertToInternalUnits(d, UnitTypeId.CubicMeters);
+                prm.Set(d);
+                break;
+            case StorageType.ElementId:
+                string mname = Convert.ToString(v, CultureInfo.InvariantCulture);
+                var mat = new FilteredElementCollector(doc).OfClass(typeof(Material)).Cast<Material>().FirstOrDefault(m => m.Name.Equals(mname, StringComparison.OrdinalIgnoreCase))
+                          ?? throw new ArgumentException($"key '{KeyName(row)}': '{field}' takes a material; no material '{mname}'.");
+                prm.Set(mat.Id);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// A key schedule of a category with the fields and keys (rows) the user gives: each key's name and its values.
+    /// Elements take a key with schedule_key_assign; their keyed values then follow the key.
+    /// </summary>
+    private static object ScheduleKeyCreate(EditContext c, Obj p)
+    {
+        var doc = c.Doc;
+        var cat = new ElementId(Find.Cat(doc, NeedStr(p, "category")));
+        if (!ViewSchedule.IsValidCategoryForKeySchedule(cat)) throw new ArgumentException($"Revit has no key schedules for '{Str(p, "category")}'.");
+        var s = ViewSchedule.CreateKeySchedule(doc, cat);
+        if (Str(p, "name") is string name) s.Name = name;
+        if (Str(p, "key_parameter") is string kp) s.KeyScheduleParameterName = kp;
+        var def = s.Definition;
+        var available = new Dictionary<string, SchedulableField>(StringComparer.OrdinalIgnoreCase);
+        foreach (var sf in def.GetSchedulableFields())
+        {
+            string fieldName = sf.GetName(doc);
+            if (!string.IsNullOrEmpty(fieldName) && !available.ContainsKey(fieldName)) available[fieldName] = sf;
+        }
+        var fields = new List<string>();
+        foreach (string field in StrList(p, "fields", 40, required: false) ?? new List<string>())
+        {
+            if (!available.TryGetValue(field, out var sf))
+                throw new ArgumentException($"No field '{field}' for a key schedule of this category. Available: {string.Join(", ", available.Keys.OrderBy(k => k).Take(120))}");
+            def.AddField(sf);
+            fields.Add(field);
+        }
+        doc.Regenerate();
+        var rows = Has(p, "keys") ? ObjList(p, "keys", 500) : new List<Obj>();
+        var body = s.GetTableData().GetSectionData(SectionType.Body);
+        var made = new List<object>();
+        foreach (var r in rows)
+        {
+            string key = NeedStr(r, "key");
+            var before = new HashSet<long>(KeyRows(doc, s).Select(e => e.Id.Value));
+            body.InsertRow(body.FirstRowNumber);
+            doc.Regenerate();
+            var row = KeyRows(doc, s).FirstOrDefault(e => !before.Contains(e.Id.Value))
+                      ?? throw new InvalidOperationException("Revit did not add a key row.");
+            if (KeyRows(doc, s).Any(e => e.Id != row.Id && KeyName(e).Equals(key, StringComparison.OrdinalIgnoreCase)))
+                throw new ArgumentException($"Two keys are named '{key}'.");
+            row.get_Parameter(BuiltInParameter.REF_TABLE_ELEM_NAME)?.Set(key);
+            if (Has(r, "values")) foreach (var kv in Sub(r, "values")) SetKeyValue(doc, row, kv.Key, kv.Value);
+            made.Add(new { key, id = row.Id.Value });
+        }
+        return new { id = s.Id.Value, name = s.Name, keyParameter = s.KeyScheduleParameterName, fields, keys = made };
+    }
+
+    /// <summary>Give elements a key of a key schedule (the elements' key parameter), or clear it (key: null).</summary>
+    private static object ScheduleKeyAssign(EditContext c, Obj p)
+    {
+        var doc = c.Doc;
+        var s = KeySchedule(doc, p);
+        string kp = s.KeyScheduleParameterName;
+        ElementId keyId = ElementId.InvalidElementId;
+        string key = Str(p, "key");
+        if (key != null)
+            keyId = KeyRows(doc, s).FirstOrDefault(e => KeyName(e).Equals(key, StringComparison.OrdinalIgnoreCase))?.Id
+                    ?? throw new ArgumentException($"No key '{key}' in '{s.Name}'. Keys: {string.Join(", ", KeyRows(doc, s).Select(KeyName))}.");
+        var els = c.Elements(p);
+        int set = 0;
+        var refused = new List<object>();
+        foreach (var e in els)
+        {
+            c.Editable(e);
+            var prm = e.LookupParameter(kp);
+            if (prm == null || prm.IsReadOnly || prm.StorageType != StorageType.ElementId) { refused.Add(new { id = e.Id.Value, why = $"no '{kp}' key parameter" }); continue; }
+            prm.Set(keyId);
+            set++;
+        }
+        if (set == 0) throw new ArgumentException($"None of the elements takes '{kp}': " + string.Join("; ", refused.Take(5)));
+        return new { schedule = s.Name, keyParameter = kp, key, set, refused };
     }
 }

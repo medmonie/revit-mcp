@@ -1,7 +1,7 @@
 # Roadmap
 
 Planned and finished work for the Revit MCP bridge, by phase. S = one build batch, M = one or two batches with a live
-test, L = several batches. Status as of version 0.29.0 (28 November 2026).
+test, L = several batches. Status as of version 0.30.0 (28 November 2026).
 
 | Status | Meaning |
 |---|---|
@@ -124,15 +124,15 @@ The whole Revit API (2024 and 2027: 2,713 public types) is mapped against the br
 | Global parameters: read, create, set | Read + Edit | Medium | S | Built (0.17.0) |
 | Material assets (structural, thermal, appearance): read, set | Read + Edit | Medium | M | Built (0.17.0) |
 | Keynotes and assembly codes: read | Read | Low | S | Built (0.17.0) |
-| Export DWF, FBX, gbXML, DGN | Edit | Low | S | Built (0.17.0): DWF and FBX tested live; DGN needs a DGN setup or seed file; gbXML not working live yet |
+| Export DWF, FBX, gbXML, DGN | Edit | Low | S | Done (0.17.0 DWF and FBX; 0.30.0 staged publishing, DGN falls back to a seed file installed with Revit, gbXML tries building elements then rooms / spaces). DGN needs a DGN setup or seed file when none is installed (none on the test PC); gbXML needs a model Revit can build an energy model from |
 
-## Phase 10 - Analytical model and loads (built)
+## Phase 10 - Analytical model and loads (done)
 
 | Feature | Read / edit | Priority | Effort | Status |
 |---|---|---|---|---|
-| Analytical members and panels: read, with releases and supports | Read | Medium | M | Built (0.21.0; live model had none) |
-| Load cases, combinations and loads: read | Read | Medium | M | Built (0.21.0; live model had none) |
-| Place loads and load cases from given values (no load derivation) | Edit | Low | L | Done (0.22.0: load cases, combinations, hosted point / line / area loads; analytical members and panels) |
+| Analytical members and panels: read, with releases and supports | Read | Medium | M | Done (0.21.0; 0.30.0 supports with their direction states; tested on 2024 and 2027 with members, panels, releases and supports made from nothing) |
+| Load cases, combinations and loads: read | Read | Medium | M | Done (tested 0.30.0 on 2024 and 2027) |
+| Place loads and load cases from given values (no load derivation) | Edit | Low | L | Done (0.22.0: load cases, combinations, hosted point / line / area loads; analytical members and panels; 0.30.0: end releases, point / line / area supports; 0.22.0 checks passed on Revit 2027) |
 
 ## Phase 11 - Architectural and site modelling (partly done; the rest moves to phase 17)
 
@@ -174,26 +174,26 @@ The whole Revit API (2024 and 2027: 2,713 public types) is mapped against the br
 | Place connections of a type the engineer chooses between given members | Edit | Low | L | Planned |
 | Steel plates, bolts, cuts and welds (Steel namespace) from given values | Edit | Low | L | Planned |
 
-## Phase 15 - Model QA and query depth (proposed)
+## Phase 15 - Model QA and query depth (done)
 
 | Feature | Read / edit | Priority | Effort | Status |
 |---|---|---|---|---|
 | Ray casting: what is above / below / beside a point or element, clearances (ReferenceIntersector) | Read | P1 | M | Done (0.21.0: ray_cast, clearances; tested on the KTR15 federated model) |
-| Parts: create from layers, divide (pour breaks, construction joints), merge | Edit | P2 | M | Planned |
-| More model_health checks from Revit's PerformanceAdviser rules | Read | P2 | S | Planned |
-| Linear / radial arrays; alignment locks; reference planes | Edit | P3 | S | Planned |
-| Interactive picking (the user clicks elements or points while Claude waits) | Read | P3 | M | Planned |
-| Change watching (dynamic model updaters) and preview graphics before an edit (DirectContext3D) | Read | P3 | L | Planned |
+| Parts: create from layers, divide (pour breaks, construction joints), merge | Edit | P2 | M | Done 0.30 (parts_create, parts_divide by lines on a level or by grids / levels / reference planes, parts_merge) |
+| More model_health checks from Revit's PerformanceAdviser rules | Read | P2 | S | Done 0.30 (performance_adviser: Revit's rules and their findings with elements) |
+| Linear / radial arrays; alignment locks; reference planes | Edit | P3 | S | Done 0.30 (array_create grouped or plain; align_lock to a grid or reference plane; reference_plane_create) |
+| Interactive picking (the user clicks elements or points while Claude waits) | Read | P3 | M | Done 0.30 (pick: element, elements or point; Esc cancels) |
+| Change watching (dynamic model updaters) and preview graphics before an edit (DirectContext3D) | Read | P3 | L | Done 0.30 (watch_start / watch_changes / watch_stop; preview_show / preview_clear) |
 
-## Phase 16 - Documents and batch automation (first part done)
+## Phase 16 - Documents and batch automation (done)
 
 | Feature | Read / edit | Priority | Effort | Status |
 |---|---|---|---|---|
 | Open (detached, read-only), close, new from template; reads over a folder of models without saving | Read + Edit | P1 | M | Done (0.24.1: list_documents, model_files, model_open / close / new, batch_read; reads by document_id of any open model) |
-| Schedule depth: calculated fields, key schedules, cell styles, split schedules | Edit | P2 | M | Planned |
-| Family type parameters and formulas in loaded families (no geometry) | Edit | P3 | M | Planned |
-| Colour fill schemes; arc-length and ordinate dimensions; sheet collections and STEP export (2027) | Edit | P3 | M | Planned |
-| Autodesk (ACC) parameters service | Edit | P3 | M | Planned |
+| Schedule depth: calculated fields, key schedules, cell styles, split schedules | Edit | P2 | M | Done 0.30 (schedule_key_create / schedule_key_assign; schedule_set style, split, unsplit). Calculated fields (formula or percentage): Not possible, Revit's API cannot make them (refused with the reason) |
+| Family type parameters and formulas in loaded families (no geometry) | Edit | P3 | M | Done 0.30 (family_parameters: add, rename, types, formulas, values, remove; loaded back with the family's values) |
+| Colour fill schemes; arc-length and ordinate dimensions; sheet collections and STEP export (2027) | Edit | P3 | M | Done 0.30 (color_fill_scheme_set with legend; ordinate dimensions through a dimension 'type'; sheet_collection_set and export_step on 2027). Arc-length dimensions: Not possible in projects (the API makes them in families only) |
+| Autodesk (ACC) parameters service | Edit | P3 | M | Built 0.30 (acc_parameter_add by the service's parameter id; refusals tested; needs a parameter id from Mohamed's ACC account for a live add) |
 
 ## Phase 17 - Architecture (proposed; for the architecture department; takes over the rest of phase 11)
 
@@ -223,7 +223,7 @@ equipment capacity, sizes, flow rates, lighting levels, circuit loads) come from
 | **HVAC:** air terminals (supply, return, exhaust) placed in ceilings / spaces with the given airflow, connected to a duct | Edit | P1 | M | Done 0.26 (air_terminal_place: flows, connected to a main) |
 | **HVAC:** mechanical equipment (AHU, FCU, VRF indoor / outdoor units, fans) placed from given families and connected | Edit | P1 | M | Done 0.27 (family_place; mep_route from an equipment connector, to_main; mep_connect classification) |
 | **HVAC:** duct systems (supply / return / exhaust) and hydronic piping systems (chilled / hot water, condensate): create, assign | Edit | P1 | M | Done 0.25 / 0.26 (mep_system_create; mep_system_add / remove) |
-| **HVAC:** spaces and HVAC zones with the engineer's design airflow; read space airflow vs. sum of its terminals | Read + Edit | P1 | M | Done 0.26 (spaces_from_rooms, space_airflow_set, hvac_zone_create (2024); read: air_terminals) |
+| **HVAC:** spaces and HVAC zones with the engineer's design airflow; read space airflow vs. sum of its terminals | Read + Edit | P1 | M | Done 0.26 (spaces_from_rooms, space_airflow_set, hvac_zone_create; read: air_terminals); 0.30 hvac_zone_create on Revit 2027 makes system zones |
 | **HVAC:** read Revit's computed flow, velocity and pressure drop per duct / pipe and per system; flag values over limits the engineer gives | Read | P1 | M | Done 0.25 (mep_flow) |
 | **HVAC:** duct accessories (dampers, fire dampers at fire-rated walls / slabs found by crossings), insulation and lining | Read + Edit | P2 | M | Done 0.28 (mep_accessory_place at points or crossings, host or link; mep_insulation_add / remove; read mep_insulation). Pipe accessories (valves) too |
 | **HVAC:** air terminal, equipment, duct and pipe schedules; quantities to Excel | Read + Edit | P1 | S | Done 0.27 / 0.29 (schedule_create on MEP categories; mep_quantities with duct surface area; mep_report workbook) |

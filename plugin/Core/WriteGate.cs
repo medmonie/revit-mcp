@@ -29,6 +29,7 @@ internal static class WriteGate
         scope = "this Revit session, all open models; ends when Revit closes or 'Stop Editing' is pressed",
         howToGrant = "answer Yes to the one-time dialog on the first edit, or press Add-Ins > Claude MCP > Allow Editing in Revit",
         auditLog = Audit.FilePath,
+        audit = Audit.Health,
     };
 
     public static void Grant(string by)

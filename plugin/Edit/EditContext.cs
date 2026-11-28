@@ -82,11 +82,69 @@ internal sealed class EditContext
 
     public static string Folder(Obj p) => FullPath(NeedStr(p, "folder"), "folder");
 
-    public void DeferOutput(string folder, Action work) => Defer(() =>
+    /// <summary>save_as: Revit writes the file itself (OverwriteExistingFile decides), so it is not staged.</summary>
+    public void DeferSave(string folder, Action work) => Defer(() =>
     {
         Directory.CreateDirectory(folder);
         work();
     });
+
+    /// <summary>
+    /// Exports run into a private staging folder beside the destination; the files are then published with a move that
+    /// the file system refuses when the destination exists (no replace), unless overwrite: true. If another writer created
+    /// one of the files in the meantime, the files this export already published are taken back and everything it made is
+    /// left in a '_revit-mcp-unpublished-...' folder, so nothing is half-replaced and nothing is lost.
+    /// </summary>
+    public void DeferOutput(string folder, Obj p, Action<string> work)
+    {
+        bool overwrite = Flag(p, "overwrite", false);
+        Defer(() =>
+        {
+            Directory.CreateDirectory(folder);
+            string stage = IOPath.Combine(folder, ".revit-mcp-stage-" + Guid.NewGuid().ToString("N").Substring(0, 12));
+            var dir = Directory.CreateDirectory(stage);
+            dir.Attributes |= FileAttributes.Hidden;
+            try
+            {
+                work(stage);
+                Publish(folder, stage, overwrite);
+            }
+            finally
+            {
+                try { if (Directory.Exists(stage)) Directory.Delete(stage, true); } catch { /* reported below if files remain */ }
+                if (Directory.Exists(stage)) Warn($"the staging folder {stage} could not be removed; delete it by hand.");
+            }
+        });
+    }
+
+    private void Publish(string folder, string stage, bool overwrite)
+    {
+        var made = Directory.GetFiles(stage, "*", SearchOption.AllDirectories)
+            .Select(f => (from: f, to: IOPath.Combine(folder, f.Substring(stage.Length + 1)))).ToList();
+        if (made.Count == 0) throw new InvalidOperationException("The exporter reported success but wrote no file.");
+        var moved = new List<(string from, string to)>();
+        foreach (var (from, to) in made)
+        {
+            try
+            {
+                Directory.CreateDirectory(IOPath.GetDirectoryName(to));
+                if (overwrite) { File.Copy(from, to, true); File.Delete(from); }
+                else File.Move(from, to);   // throws when 'to' exists: the file system enforces no-replace
+                moved.Add((from, to));
+            }
+            catch (IOException ex)
+            {
+                foreach (var (back, at) in moved) { try { File.Move(at, back); } catch { /* left published; listed below */ } }
+                string keep = IOPath.Combine(folder, "_revit-mcp-unpublished-" + DateTime.Now.ToString("yyyyMMdd-HHmmss"));
+                try { Directory.Move(stage, keep); } catch { keep = stage; }
+                var stuck = moved.Where(m => File.Exists(m.to) && !File.Exists(m.from)).Select(m => IOPath.GetFileName(m.to)).ToList();
+                throw new InvalidOperationException($"'{IOPath.GetFileName(to)}' appeared in {folder} while exporting ({ex.Message.Trim()}). "
+                    + "Nothing was replaced; this export's files are kept in " + keep
+                    + (stuck.Count > 0 ? ". Already published and not taken back: " + string.Join(", ", stuck) : "")
+                    + ". Move them yourself or export again with overwrite: true.");
+            }
+        }
+    }
 
     public static string SafeName(string name)
     {

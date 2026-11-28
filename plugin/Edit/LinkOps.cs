@@ -88,7 +88,16 @@ internal static class LinkOps
                 if (r is LinkLoadResult l && !LinkLoadResult.IsCodeSuccess(l.LoadResult))
                     throw new InvalidOperationException($"Revit did not load '{t.Name}': {l.LoadResult}.");
             }
-            else r = path != null ? t.CadType.LoadFrom(path) : t.CadType.Reload();
+            else
+            {
+                // unlike Revit links, a CAD link reloads inside a transaction of its own
+                using (var tr = new Transaction(c.Doc, "Claude: reload CAD link"))
+                {
+                    tr.Start();
+                    r = path != null ? t.CadType.LoadFrom(path) : t.CadType.Reload();
+                    if (tr.Commit() != TransactionStatus.Committed) throw new InvalidOperationException("Revit did not commit the CAD reload.");
+                }
+            }
             result["loadResult"] = LoadText(r);
         });
         result["note"] = "Reloads after the commit; postCommit and loadResult say how it went.";

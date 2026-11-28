@@ -17,7 +17,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 
 from bridge_client import EDIT_TIMEOUT, BridgeError
-from xlsx_util import flag, header as _header, literal_cell, save_workbook, xlsx_path as _xlsx_path
+from xlsx_util import CellBudget, flag, header as _header, literal_cell, save_workbook, xlsx_path as _xlsx_path
 
 KEY_FILL = PatternFill("solid", fgColor="D9D9D9")
 FIXED = ["id", "category", "family", "type", "level"]   # read-only columns written by params_to_excel
@@ -158,7 +158,9 @@ def _parameters_sheet(path, target: dict[str, Any], explicit_target: bool):
         names = _parameter_names(headers[len(FIXED):])
         rows = {}
         fixed = {}
-        for cells in ws.iter_rows(min_row=2):
+        budget = CellBudget()
+        for index, cells in enumerate(ws.iter_rows(min_row=2), 2):
+            budget.row("Parameters", index, len(cells))
             if not cells or cells[0].value is None:
                 continue
             eid = _element_id(cells[0].value)
@@ -328,7 +330,8 @@ def excel_template(params: dict[str, Any]) -> dict[str, Any]:
     return {"file": str(path), "sheets": wb.sheetnames}
 
 
-def _rows(wb, name: str) -> list[tuple[int, dict[str, Any]]]:
+def _rows(wb, name: str, budget: CellBudget | None = None) -> list[tuple[int, dict[str, Any]]]:
+    budget = budget or getattr(wb, "_mcp_budget", None) or CellBudget()
     if name not in wb.sheetnames:
         return []
     ws = wb[name]
@@ -338,6 +341,7 @@ def _rows(wb, name: str) -> list[tuple[int, dict[str, Any]]]:
         raise ValueError(f"{name}: duplicate column headers.")
     out = []
     for i, r in enumerate(ws.iter_rows(min_row=2, values_only=True), 2):
+        budget.row(name, i, len(r) if r else 0)
         if r and any(v not in (None, "") for v in r):
             out.append((i, dict(zip(headers, r))))
     return out
@@ -370,7 +374,8 @@ def excel_to_model(call: Callable[..., Any], params: dict[str, Any], target: dic
         raise ValueError("The active model does not match document_id. Check ping before continuing.")
     params = {**params, "operation_id": params.get("operation_id") or uuid.uuid4().hex}
     path = _xlsx_path(params, must_exist=True)
-    wb = load_workbook(path, data_only=True)
+    wb = load_workbook(path, data_only=True, read_only=True)
+    wb._mcp_budget = CellBudget()   # one budget across every sheet this call reads
     ops: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
 

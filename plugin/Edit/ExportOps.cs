@@ -81,11 +81,11 @@ internal static class ExportOps
         string folder = EditContext.Folder(p);
         var views = Views(c, p);
         var files = Named(c, p, views, folder, ".dwg");
-        c.DeferOutput(folder, () =>
+        c.DeferOutput(folder, p, stage =>
         {
             var failed = new List<string>();
             foreach (var (view, file) in files)
-                if (!c.Doc.Export(folder, file, new List<ElementId> { view.Id }, new DWGExportOptions())) failed.Add(file);
+                if (!c.Doc.Export(stage, file, new List<ElementId> { view.Id }, new DWGExportOptions())) failed.Add(file);
             if (failed.Count > 0) throw new InvalidOperationException("DWG export failed for: " + string.Join(", ", failed));
         });
         return new { folder, files = files.Select(f => f.file + ".dwg").ToList(), status = Queued };
@@ -102,13 +102,13 @@ internal static class ExportOps
         options.FileVersion = ifc;
         string viewName = null;
         if (Has(p, "view")) { var v = Find.ViewOf(c.Doc, Ref(p, "view")); options.FilterViewId = v.Id; viewName = v.Name; }
-        c.DeferOutput(folder, () =>
+        c.DeferOutput(folder, p, stage =>
         {
             // The IFC exporter needs an open transaction; nothing it changes is kept.
             using (var t = new Transaction(c.Doc, "IFC export"))
             {
                 t.Start();
-                bool ok = c.Doc.Export(folder, name, options);
+                bool ok = c.Doc.Export(stage, name, options);
                 t.RollBack();
                 if (!ok) throw new InvalidOperationException("IFC export failed.");
             }
@@ -126,19 +126,19 @@ internal static class ExportOps
             string name = BaseName(c, p);
             c.GuardOverwrite(p, folder, name + ".pdf");
             var options = new PDFExportOptions { FileName = name, Combine = true };
-            c.DeferOutput(folder, () =>
+            c.DeferOutput(folder, p, stage =>
             {
-                if (!c.Doc.Export(folder, views.Select(v => v.Id).ToList(), options))
+                if (!c.Doc.Export(stage, views.Select(v => v.Id).ToList(), options))
                     throw new InvalidOperationException("PDF export failed.");
             });
             return new { folder, files = new[] { name + ".pdf" }, combine, views = views.Select(v => v.Name).ToList(), status = Queued };
         }
         var files = Named(c, p, views, folder, ".pdf");
-        c.DeferOutput(folder, () =>
+        c.DeferOutput(folder, p, stage =>
         {
             var failed = new List<string>();
             foreach (var (view, file) in files)
-                if (!c.Doc.Export(folder, new List<ElementId> { view.Id }, new PDFExportOptions { FileName = file, Combine = true }))
+                if (!c.Doc.Export(stage, new List<ElementId> { view.Id }, new PDFExportOptions { FileName = file, Combine = true }))
                     failed.Add(file);
             if (failed.Count > 0) throw new InvalidOperationException("PDF export failed for: " + string.Join(", ", failed));
         });
@@ -161,7 +161,7 @@ internal static class ExportOps
             options.ViewId = v.Id;
             viewName = v.Name;
         }
-        c.DeferOutput(folder, () => c.Doc.Export(folder, name, options));
+        c.DeferOutput(folder, p, stage => c.Doc.Export(stage, name, options));
         return new { file = IOPath.Combine(folder, name + ".nwc"), scope = options.ExportScope.ToString(), view = viewName, status = Queued };
     }
 
@@ -182,7 +182,7 @@ internal static class ExportOps
             ImageResolution = ImageResolution.DPI_150,
         };
         options.SetViewsAndSheets(views.Select(v => v.Id).ToList());
-        c.DeferOutput(folder, () => c.Doc.ExportImage(options));
+        c.DeferOutput(folder, p, stage => { options.FilePath = IOPath.Combine(stage, name); c.Doc.ExportImage(options); });
         return new { folder, name, views = views.Select(v => v.Name).ToList(), status = Queued,
                      note = "One PNG per view; Revit appends the view type and name to the file name." };
     }
@@ -195,7 +195,7 @@ internal static class ExportOps
         string name = EditContext.SafeName(Str(p, "name") ?? schedule.Name) + ".csv";
         c.GuardOverwrite(p, folder, name);
         var options = new ViewScheduleExportOptions { FieldDelimiter = "," };
-        c.DeferOutput(folder, () => schedule.Export(folder, name, options));
+        c.DeferOutput(folder, p, stage => schedule.Export(stage, name, options));
         return new { file = IOPath.Combine(folder, name), schedule = schedule.Name, status = Queued };
     }
 
@@ -226,17 +226,17 @@ internal static class ExportOps
         {
             string name = BaseName(c, p);
             c.GuardOverwrite(p, folder, name + ".dwf");
-            c.DeferOutput(folder, () =>
+            c.DeferOutput(folder, p, stage =>
             {
-                if (!Rolled(c.Doc, "DWF export", () => c.Doc.Export(folder, name, SetOf(views), new DWFExportOptions { MergedViews = true })))
+                if (!Rolled(c.Doc, "DWF export", () => c.Doc.Export(stage, name, SetOf(views), new DWFExportOptions { MergedViews = true })))
                     throw new InvalidOperationException("DWF export failed.");
             });
             return new { folder, files = new[] { name + ".dwf" }, merged, views = views.Select(v => v.Name).ToList(), status = Queued };
         }
         var files = Named(c, p, views, folder, ".dwf");
-        c.DeferOutput(folder, () =>
+        c.DeferOutput(folder, p, stage =>
         {
-            var failed = files.Where(f => !Rolled(c.Doc, "DWF export", () => c.Doc.Export(folder, f.file, SetOf(new[] { f.view }), new DWFExportOptions()))).Select(f => f.file).ToList();
+            var failed = files.Where(f => !Rolled(c.Doc, "DWF export", () => c.Doc.Export(stage, f.file, SetOf(new[] { f.view }), new DWFExportOptions()))).Select(f => f.file).ToList();
             if (failed.Count > 0) throw new InvalidOperationException("DWF export failed for: " + string.Join(", ", failed));
         });
         return new { folder, files = files.Select(f => f.file + ".dwf").ToList(), merged, status = Queued };
@@ -248,9 +248,9 @@ internal static class ExportOps
         var view = Find.ViewOrActive(c.Doc, p) as View3D;
         if (view == null || view.IsTemplate) throw new ArgumentException("export_fbx needs a 3D view ('view', or make a 3D view active).");
         c.GuardOverwrite(p, folder, name + ".fbx");
-        c.DeferOutput(folder, () =>
+        c.DeferOutput(folder, p, stage =>
         {
-            if (!c.Doc.Export(folder, name, SetOf(new[] { view }), new FBXExportOptions()))
+            if (!c.Doc.Export(stage, name, SetOf(new[] { view }), new FBXExportOptions()))
                 throw new InvalidOperationException("FBX export failed.");
         });
         return new { file = IOPath.Combine(folder, name + ".fbx"), view = view.Name, status = Queued };
@@ -260,42 +260,65 @@ internal static class ExportOps
     {
         string folder = EditContext.Folder(p), name = BaseName(c, p);
         c.GuardOverwrite(p, folder, name + ".xml");
-        c.DeferOutput(folder, () =>
+        c.DeferOutput(folder, p, stage =>
         {
-            bool created = false;
-            bool ok = Rolled(c.Doc, "gbXML export", () =>
+            // The exporter needs an energy analysis model; it is made for the export and rolled back with the transaction.
+            // From the building elements first; when Revit refuses that, from the rooms / spaces.
+            string usedModel = null; string lastError = null;
+            foreach (var fromSpaces in new[] { false, true })
             {
-                // The exporter needs an energy analysis model from the building elements; the settings and the model made here
-                // are rolled back with the transaction.
-#if REVIT2024
-                var settings = Autodesk.Revit.DB.Analysis.EnergyDataSettings.GetFromDocument(c.Doc);
-#else
-                var settings = Autodesk.Revit.DB.Analysis.EnergyDataSettings.GetEnergyDataSettings(c.Doc);
-#endif
-                if (settings != null && settings.AnalysisType != Autodesk.Revit.DB.Analysis.AnalysisMode.BuildingElements)
-                    settings.AnalysisType = Autodesk.Revit.DB.Analysis.AnalysisMode.BuildingElements;
-                if (Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModel.GetMainEnergyAnalysisDetailModel(c.Doc) == null)
+                try
                 {
-#if REVIT2024
-                    Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModel.Create(c.Doc, new Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModelOptions
+                    bool ok = Rolled(c.Doc, "gbXML export", () =>
                     {
-                        Tier = Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModelTier.Final,
-                        EnergyModelType = Autodesk.Revit.DB.Analysis.EnergyModelType.BuildingElement,
-                    });
-#else
-                    Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModel.Create(c.Doc);   // uses the mode in Energy Settings
-#endif
-                    created = true;
-                }
-                var options = new GBXMLExportOptions();
 #if REVIT2024
-                options.ExportEnergyModelType = ExportEnergyModelType.BuildingElement;
+                        var settings = Autodesk.Revit.DB.Analysis.EnergyDataSettings.GetFromDocument(c.Doc);
+#else
+                        var settings = Autodesk.Revit.DB.Analysis.EnergyDataSettings.GetEnergyDataSettings(c.Doc);
 #endif
-                c.Doc.Regenerate();
-                return c.Doc.Export(folder, name, options);
-            });
-            if (!ok) throw new InvalidOperationException("gbXML export failed; check Energy Settings (Analyze tab).");
-            if (created) c.Warn("gbXML: an energy analysis model was made for the export from the building elements and not kept.");
+                        var mode = fromSpaces ? Autodesk.Revit.DB.Analysis.AnalysisMode.RoomsOrSpaces : Autodesk.Revit.DB.Analysis.AnalysisMode.BuildingElements;
+                        if (settings != null && settings.AnalysisType != mode) settings.AnalysisType = mode;
+                        if (settings != null)
+                        {
+                            // the lowest level as ground plane when none is set; rooms (or spaces when there are no rooms) for the spatial model
+                            var ground = c.Doc.GetElement(settings.GroundPlane) as Level;
+                            if (ground == null)
+                            {
+                                var low = new FilteredElementCollector(c.Doc).OfClass(typeof(Level)).Cast<Level>().OrderBy(l => l.ProjectElevation).FirstOrDefault();
+                                if (low != null) settings.GroundPlane = low.Id;
+                            }
+                            if (fromSpaces)
+                            {
+                                bool rooms = new FilteredElementCollector(c.Doc).OfCategory(BuiltInCategory.OST_Rooms).WhereElementIsNotElementType().GetElementCount() > 0;
+                                settings.ExportCategory = new ElementId(rooms ? BuiltInCategory.OST_Rooms : BuiltInCategory.OST_MEPSpaces);
+                            }
+                        }
+                        var existing = Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModel.GetMainEnergyAnalysisDetailModel(c.Doc);
+                        if (existing != null) c.Doc.Delete(existing.Id);
+                        c.Doc.Regenerate();
+#if REVIT2024
+                        Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModel.Create(c.Doc, new Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModelOptions
+                        {
+                            Tier = Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModelTier.Final,
+                            EnergyModelType = fromSpaces ? Autodesk.Revit.DB.Analysis.EnergyModelType.SpatialElement : Autodesk.Revit.DB.Analysis.EnergyModelType.BuildingElement,
+                        });
+#else
+                        Autodesk.Revit.DB.Analysis.EnergyAnalysisDetailModel.Create(c.Doc);   // follows AnalysisType, ground plane and export category set above
+#endif
+                        var options = new GBXMLExportOptions();
+#if REVIT2024
+                        options.ExportEnergyModelType = fromSpaces ? ExportEnergyModelType.SpatialElement : ExportEnergyModelType.BuildingElement;
+#endif
+                        c.Doc.Regenerate();
+                        return c.Doc.Export(stage, name, options);
+                    });
+                    if (ok) { usedModel = fromSpaces ? "rooms / spaces" : "building elements"; break; }
+                    lastError = "Revit reported the export as failed";
+                }
+                catch (Exception ex) { lastError = ex.Message; }
+            }
+            if (usedModel == null) throw new InvalidOperationException("gbXML export failed from the building elements and from the rooms / spaces: " + lastError + " Check Energy Settings (Analyze tab).");
+            c.Warn($"gbXML: exported from the {usedModel}; the energy analysis model made for it was not kept.");
         });
         return new { file = IOPath.Combine(folder, name + ".xml"), status = Queued,
                      note = "gbXML from the building elements, with the model's Energy Settings (Analyze tab); the model is not changed." };
@@ -307,26 +330,32 @@ internal static class ExportOps
         var views = Views(c, p);
         string setup = Str(p, "setup");
         string seed = Has(p, "seed") ? EditContext.FullPath(NeedStr(p, "seed"), "seed") : null;
+        string installedSeed = seed == null ? InstalledDgnSeed(c.Doc) : null;
         if (seed != null && !File.Exists(seed)) throw new ArgumentException($"DGN seed file '{seed}' does not exist.");
         if (setup != null && !DGNExportOptions.GetPredefinedSetupNames(c.Doc).Contains(setup))
             throw new ArgumentException($"No DGN export setup '{setup}'. Setups: {string.Join(", ", DGNExportOptions.GetPredefinedSetupNames(c.Doc))}.");
         var files = Named(c, p, views, folder, ".dgn");
-        c.DeferOutput(folder, () =>
+        c.DeferOutput(folder, p, stage =>
         {
             // Without a setup, Revit's defaults are tried first, then each DGN setup saved in the model (they carry a seed file).
             var candidates = setup != null ? new List<string> { setup }
                 : new List<string> { null }.Concat(DGNExportOptions.GetPredefinedSetupNames(c.Doc)).ToList();
+            // last resort: Revit's own default options with a seed file that came with Revit
+            if (setup == null && seed == null && installedSeed != null) candidates.Add("\u0001seed");
             var failed = new List<string>();
             foreach (var (view, file) in files)
             {
                 string used = null; bool ok = false;
                 foreach (var name in candidates)
                 {
-                    var options = name != null ? DGNExportOptions.GetPredefinedOptions(c.Doc, name) : new DGNExportOptions();
+                    bool withSeed = name == "\u0001seed";
+                    var options = name != null && !withSeed ? DGNExportOptions.GetPredefinedOptions(c.Doc, name) : new DGNExportOptions();
                     if (seed != null) options.SeedName = seed;
-                    if (Rolled(c.Doc, "DGN export", () => c.Doc.Export(folder, file, new List<ElementId> { view.Id }, options))) { ok = true; used = name; break; }
+                    if (withSeed) options.SeedName = installedSeed;
+                    if (Rolled(c.Doc, "DGN export", () => c.Doc.Export(stage, file, new List<ElementId> { view.Id }, options))) { ok = true; used = name; break; }
                 }
                 if (!ok) failed.Add(file);
+                else if (used == "\u0001seed") c.Warn($"DGN '{file}': no DGN setup in the model; exported with Revit's seed file {installedSeed}.");
                 else if (used != null && setup == null) c.Warn($"DGN '{file}': Revit's default options failed; exported with the model's setup '{used}'.");
             }
             if (failed.Count > 0)
@@ -354,7 +383,41 @@ internal static class ExportOps
         string folder = IOPath.GetDirectoryName(path);
         c.GuardOverwrite(p, folder, IOPath.GetFileName(path));
         if (c.Doc.IsWorkshared) throw new InvalidOperationException("save_as is not available for workshared models (it would create a new central or detached copy); do that in Revit.");
-        c.DeferOutput(folder, () => c.Doc.SaveAs(path, new SaveAsOptions { OverwriteExistingFile = overwrite }));
+        c.DeferSave(folder, () => c.Doc.SaveAs(path, new SaveAsOptions { OverwriteExistingFile = overwrite }));
         return new { file = path, status = Queued };
+    }
+
+    /// <summary>A DGN seed file installed with this Revit (metric or imperial to match the model), or null.</summary>
+    private static string InstalledDgnSeed(Document doc)
+    {
+        try
+        {
+            string ver = doc.Application.VersionNumber;
+            var roots = new[]
+            {
+                IOPath.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Autodesk", "RVT " + ver),
+                IOPath.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Autodesk", "Revit " + ver),
+            };
+            // walk folder by folder so one folder Revit's process may not read does not end the search
+            var seeds = new List<string>();
+            var stack = new Stack<(string dir, int depth)>(roots.Where(Directory.Exists).Select(r => (r, 0)));
+            int visited = 0;
+            while (stack.Count > 0 && visited < 3000)
+            {
+                var (dir, depth) = stack.Pop();
+                visited++;
+                try { seeds.AddRange(Directory.GetFiles(dir, "*.dgn").Where(f => IOPath.GetFileName(f).IndexOf("seed", StringComparison.OrdinalIgnoreCase) >= 0)); } catch { /* unreadable */ }
+                if (depth < 6) { try { foreach (var d in Directory.GetDirectories(dir)) stack.Push((d, depth + 1)); } catch { /* unreadable */ } }
+            }
+            if (seeds.Count == 0) return null;
+            bool metric = doc.GetUnits().GetFormatOptions(SpecTypeId.Length).GetUnitTypeId() != UnitTypeId.Feet
+                          && doc.GetUnits().GetFormatOptions(SpecTypeId.Length).GetUnitTypeId() != UnitTypeId.FeetFractionalInches
+                          && doc.GetUnits().GetFormatOptions(SpecTypeId.Length).GetUnitTypeId() != UnitTypeId.Inches
+                          && doc.GetUnits().GetFormatOptions(SpecTypeId.Length).GetUnitTypeId() != UnitTypeId.FractionalInches;
+            return seeds.OrderByDescending(f => (IOPath.GetFileName(f).IndexOf(metric ? "metric" : "imperial", StringComparison.OrdinalIgnoreCase) >= 0 ? 2 : 0)
+                                                + (IOPath.GetFileName(f).IndexOf("3d", StringComparison.OrdinalIgnoreCase) >= 0 ? 0 : 1))
+                        .First();
+        }
+        catch { return null; }
     }
 }

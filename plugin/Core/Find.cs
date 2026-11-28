@@ -65,6 +65,7 @@ internal static class Find
         ["roofs"] = BuiltInCategory.OST_Roofs, ["ceilings"] = BuiltInCategory.OST_Ceilings, ["stairs"] = BuiltInCategory.OST_Stairs,
         ["ramps"] = BuiltInCategory.OST_Ramps, ["doors"] = BuiltInCategory.OST_Doors, ["windows"] = BuiltInCategory.OST_Windows,
         ["rebar"] = BuiltInCategory.OST_Rebar, ["rooms"] = BuiltInCategory.OST_Rooms,
+        ["spaces"] = BuiltInCategory.OST_MEPSpaces, ["mep_spaces"] = BuiltInCategory.OST_MEPSpaces, ["areas"] = BuiltInCategory.OST_Areas,
         ["grids"] = BuiltInCategory.OST_Grids, ["levels"] = BuiltInCategory.OST_Levels,
         ["generic_models"] = BuiltInCategory.OST_GenericModel, ["title_blocks"] = BuiltInCategory.OST_TitleBlocks,
         ["pipes"] = BuiltInCategory.OST_PipeCurves, ["pipe_fittings"] = BuiltInCategory.OST_PipeFitting,

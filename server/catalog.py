@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 
-BRIDGE_VERSION = "0.29.0"   # keep plugin/BridgeInfo.cs in step; the tests check it
+BRIDGE_VERSION = "0.30.0"   # keep plugin/BridgeInfo.cs in step; the tests check it
 
 Entry = tuple[str, dict[str, str]]
 Group = dict[str, Entry]
@@ -44,6 +44,9 @@ SKIP_EXISTING = "default true: skip what is already modelled there"
 READ_GROUPS: dict[str, Group] = {
     "Model": {
         "ping": ("Connection check with Revit version, active model and view, documentId for the edit target, and edit permission.", {}),
+        "revit_addins": ("What this Revit has loaded: add-in applications (name, assembly, version, file), optional exporters (Navisworks, IFC, "
+                         "DGN, DWG, DXF), the loaded structural analysis and steel connection add-ins by name, and the analytical members, "
+                         "panels, load cases, supports and steel connection types in the active model.", {}),
         "get_project_info": ("Active model: title, path, workshared / read-only, project information, phases, "
                              "counts of structural elements, open models.", {}),
         "list_levels": ("Levels with project-relative elevation and Revit's displayElevation, sorted by project elevation; "
@@ -279,7 +282,9 @@ READ_GROUPS: dict[str, Group] = {
                         "detach?": "preserve (default: keep worksets) | discard", "worksets?": "all (default) | none (open closed)",
                         "audit?": "default false"}),
         "model_close": ("Close a model that Claude opened (model_open, model_new, batch_read), without saving. Not the active model "
-                        "(Revit does not allow it) and never a model the user opened.", {"document_id": "from list_documents"}),
+                        "(Revit does not allow it) and never a model the user opened. A model with unsaved changes is closed only with "
+                        "discard_changes: true and edit permission (the changes are lost).",
+                        {"document_id": "from list_documents", "discard_changes?": "default false; true closes a modified model and drops its changes (needs edit permission)"}),
         "model_new": ("Create a new project from a template. activate: true (default) saves it once as a scratch file under "
                       "%TEMP%\\RevitMcpScratch so Revit can make it active (edits need the active model); it is never saved again.",
                       {"template?": "full .rte path; default Revit's default project template", "activate?": "default true"}),
@@ -306,6 +311,23 @@ READ_GROUPS: dict[str, Group] = {
                        {**LINK, "limit?": "default 500"}),
         "steel_connections": ("Structural (steel) connections: type, connected members, approval, code checking status.",
                               {**LINK, "limit?": "default 500"}),
+    },
+    "Model QA and session": {
+        "performance_adviser": ("Run Revit's Performance Adviser rules (Manage > Performance Adviser) on the model: per rule its description and "
+                                "findings with the elements involved.", {"rule_contains?": "only rules whose name contains this", "run?": "default true; false lists the rules",
+                                                                         "limit?": "elements per rule, default 50", "max_seconds?": "default 60"}),
+        "pick": ("Ask the user to pick in Revit while you wait: one element, several (they press Finish) or a point (in a view with a work plane). "
+                 "Esc cancels (picked: false). Active model only; nothing is changed.",
+                 {"kind?": "element (default) | elements | point", "prompt?": "text shown in Revit's status bar", "category?": "only these categories can be picked"}),
+        "watch_start": ("Start listing what changes in this model (added, modified, deleted elements, by anyone) until watch_stop.",
+                        {"category?": "only these categories; default all"}),
+        "watch_changes": ("What changed since watch_start (or since the last read): ids, kind of change, category, counts.",
+                          {"clear?": "default true: start a new list after reading", "limit?": "default 500"}),
+        "watch_stop": ("Stop watching this model.", {}),
+        "preview_show": ("Draw temporary lines and boxes in this model's plan, section and 3D views (DirectContext3D) to show where something would go "
+                         "before an edit. Not part of the model; gone with preview_clear or when Revit closes.",
+                         {"lines?": "list of [" + XYZ + ", " + XYZ + "]", "boxes?": "list of [min " + XYZ + ", max " + XYZ + "]", "color?": "default #FF6600"}),
+        "preview_clear": ("Remove previews.", {"preview?": "one preview id; default all"}),
     },
     "Meta": {
         "family_inspect": ("Look inside a loaded family (opened in memory, never saved): its parameters (instance / type, formula), solids with "
@@ -576,7 +598,7 @@ EDIT_GROUPS: dict[str, Group] = {
                                "placed beyond the elements.",
                                {"ids?": IDS, "categories?": CATEGORY_LIST + " (elements shown in the view)", "direction?": "x | y | both (default)",
                                 "offset?": "distance of the dimension line beyond the elements; default 1500 mm",
-                                "include_grids?": "default true", "view?": VIEW}),
+                                "include_grids?": "default true", "view?": VIEW, "type?": "linear dimension type name (an Ordinate type gives ordinate dimensions); default Revit's"}),
         "spot_elevation": ("Spot elevations on the top face of elements (slabs, beams, footings ...).",
                            {"ids": IDS, "point?": XY + " where to place it (default the face centre)", "leader?": "default true", "view?": VIEW}),
         "revision_create": ("Create a revision, optionally added to sheets.",
@@ -592,11 +614,24 @@ EDIT_GROUPS: dict[str, Group] = {
                           "sort?": "list of {field, order?: ascending | descending, header?, footer?, footer_count? (needs footer), blank_line?}; [] clears",
                           "itemize?": "bool", "grand_total?": "bool", "show_title?": "bool", "show_headers?": "bool",
                           "fields?": "{field name: {heading?, hidden?, align?: left | center | right, total?: bool, unit?: mm | cm | m | m2 | m3 | "
-                                     "kg | deg ..., decimals?}}"}),
+                                     "kg | deg ..., decimals?, style?: {bold?, italic?, underline?, color?: '#RRGGBB', background?: '#RRGGBB', "
+                                     "font?, size?: points}}}",
+                          "percentage?": "list of {of: field, by?: a sort / group field, heading?}: calculated percentage fields",
+                          "split?": "number of parts (2 to 20), or list of part heights on the sheet; replaces any split",
+                          "unsplit?": "true: join a split schedule back into one",
+                          "calculated?": "not possible: Revit's API cannot set a calculated field's formula (refused with the reason)"}),
+        "schedule_key_create": ("Create a key schedule of a category with the fields and keys (rows) given: each key's name and values. "
+                                "Elements then take a key with schedule_key_assign.",
+                                {"category": CATEGORY, "name?": "", "key_parameter?": "name of the key parameter elements get (default Revit's)",
+                                 "fields?": "fields of the key schedule (e.g. Comments, a shared parameter)",
+                                 "keys?": "list of {key: name, values?: {field: value}}: lengths in request units, areas m2, volumes m3"}),
+        "schedule_key_assign": ("Give elements a key of a key schedule (their key parameter), or clear it with key: null.",
+                                {"schedule": "key schedule name or id", "key": "key name, or null to clear", "ids": IDS}),
         "dimension_rotated": ("A linear dimension chain along any plan direction: through the outer faces of each element square to it, "
                               "and the grids across it, placed beyond the elements.",
                               {"ids": IDS, "angle": "direction measured along, degrees from x", "view?": VIEW,
-                               "offset?": "distance of the dimension line beyond the elements; default 1500 mm", "include_grids?": "default true"}),
+                               "offset?": "distance of the dimension line beyond the elements; default 1500 mm", "include_grids?": "default true",
+                               "type?": "linear dimension type name (an Ordinate type gives ordinate dimensions); default Revit's"}),
         "dimension_angular": ("An angular dimension between two straight grids, reference planes or model / detail lines, centred on their intersection.",
                               {"between": "two grid names, reference plane names or line ids", "view?": VIEW + " (plan or drafting)",
                                "radius?": "arc radius; default 1000 mm", "type?": "angular dimension type; default the first one"}),
@@ -714,6 +749,26 @@ EDIT_GROUPS: dict[str, Group] = {
                          {"type": TYPE + " of framing", "level": LEVEL + " (reference level)",
                           "braces": "list of {start: " + XYZ + ", end: " + XYZ + "}: points without z sit on the level"}),
     },
+    "Parts, arrays and alignment": {
+        "parts_create": ("Make parts of walls, floors, roofs and other layered elements (one part per layer).", {"ids": IDS}),
+        "parts_divide": ("Divide parts (or the parts of elements given) along lines on a level (pour breaks, construction joints) and / or by "
+                         "grids, levels and reference planes that cross them.",
+                         {"ids": "parts, or elements made into parts", "lines?": "list of [" + XY + ", " + XY + "] dividing lines",
+                          "level?": "level the lines are drawn on (with lines)", "datums?": "grid, level or reference plane ids"}),
+        "parts_merge": ("Merge touching parts into one.", {"ids": "part ids (at least two)"}),
+        "array_create": ("Array elements: linear (by a vector between neighbours, or to the last member) or radial (about a centre through an "
+                         "angle), as a Revit array group (default) or as plain copies.",
+                         {"ids": IDS, "kind": "linear | radial", "count": "number of members incl. the original (2 to 200)",
+                          "vector?": "linear: " + XYZ + " offset to the second member (anchor second) or to the last (anchor last)",
+                          "center?": "radial: " + XY + " centre", "angle?": "radial: degrees to the second or last member",
+                          "anchor?": "second (default) | last", "group?": "default true (Revit array); false: separate copies", "view?": VIEW}),
+        "reference_plane_create": ("Create a reference plane through a line (vertical by default).",
+                                   {"start": XYZ, "end": XYZ, "cut?": XYZ + " a direction in the plane, default up (vertical plane)",
+                                    "name?": "", "view?": VIEW}),
+        "align_lock": ("Lock element faces to a grid or reference plane (Revit's Align padlock). The element's face parallel to the datum must lie "
+                       "on it, or move: true moves the element onto it first.",
+                       {"datum": "grid or reference plane id", "ids": IDS, "move?": "default false", "tolerance?": "default 1 mm", "view?": VIEW + " (plan or section)"}),
+    },
     "From CAD": {
         "columns_from_cad": ("Model columns from the outlines on a CAD column layer (as cad_columns lists them): each outline gets the type of its size, "
                              "rotated to match; outlines with no type of their size are reported, not placed.",
@@ -758,6 +813,15 @@ EDIT_GROUPS: dict[str, Group] = {
                             "structural?": "default true", "skip_existing?": SKIP_EXISTING}),
     },
     "Sheets": {
+        "sheet_collection_set": ("Revit 2027: put sheets into a sheet collection (made when missing).",
+                                 {"name": "collection name", "sheets?": "sheet numbers or names"}),
+        "color_fill_scheme_set": ("A colour fill scheme for a category (rooms, areas, spaces, ducts, pipes ...): use one by name or copy one ('from') "
+                                  "under that name; colour by a parameter; set each value's colour and caption; apply it to views, optionally "
+                                  "with a legend. Colours are the user's.",
+                                  {"category": CATEGORY, "scheme": "scheme name", "from?": "scheme to copy when 'scheme' does not exist ('*': the first one)",
+                                   "title?": "", "parameter?": "parameter to colour by (e.g. Department, Name)",
+                                   "entries?": "list of {value, color?: '#RRGGBB', caption?, visible?}; new values are added for text parameters",
+                                   "views?": "plans or sections to show it in", "legend_at?": XY + " place a colour fill legend there in each view"}),
         "sheets_from_views": ("Make a sheet set: one sheet per view, numbered from 'number' upwards (S-101, S-102 ...; used numbers skipped), "
                               "named from a template, the view centred on the title block. Views already on a sheet are skipped.",
                               {"views?": "view names", "view_type?": "or: plan | FloorPlan | EngineeringPlan | Section | Elevation | ThreeD ...",
@@ -786,6 +850,19 @@ EDIT_GROUPS: dict[str, Group] = {
                                  "Runs after the commit; a dry run lists the families.",
                                  {"families?": "family names", "family_contains?": "or: families whose name contains this (e.g. 'S-STL')",
                                   "category?": "default structural columns, framing and foundations"}),
+        "family_parameters": ("Inside loadable families (any category), as given: add parameters, rename them, add types, set formulas, set "
+                              "type values and remove parameters, then load the families back with these values. No geometry is changed. "
+                              "Runs after the commit; a dry run lists the families.",
+                              {"families?": "family names", "family_contains?": "or: families whose name contains this", "category?": "only these categories",
+                               "add?": "list of {name, type: length | area | volume | angle | number | integer | text | yes_no | material, "
+                                       "instance?: default false (type parameter), group?: dimensions | construction | data | identity_data | "
+                                       "materials | structural | text | graphics | other (default), if_exists?: 'skip'}",
+                               "rename?": "{old name: new name}",
+                               "new_types?": "list of {name, from?: type to copy (default the current type), if_exists?: 'skip'}",
+                               "formulas?": "{parameter: formula as typed in Revit, e.g. 'Width * 2'; null clears it}",
+                               "values?": "{type name or '*' (all types): {parameter: value}}: lengths in request units, areas m2, volumes m3, "
+                                          "angles degrees, yes_no true / false, material by name",
+                               "remove?": "parameter names to delete"}),
     },
     "Model management": {
         "parameter_add": ("Add shared parameters to the model and bind them to categories. Takes each one from the shared parameter file "
@@ -820,6 +897,10 @@ EDIT_GROUPS: dict[str, Group] = {
                          {"kinds?": "joined_disjoint (default) | duplicate_instances | overlapping_lines (list)", "ids?": "only warnings involving these elements"}),
     },
     "Standards and data": {
+        "acc_parameter_add": ("Add a parameter from the Autodesk parameters service (ACC) to the model by its id, bound to categories. Revit must be "
+                              "signed in with access to it.",
+                              {"id": "parameter id from the service, e.g. parameters.<collection>:<name>-1.0.0", "categories": CATEGORY_LIST,
+                               "instance?": "default the service's", "visible?": "", "region?": "hub region (US, EMEA, AUS ...); Revit 2027 default US"}),
         "global_parameter_create": ("Create a global parameter, with the value or formula you give.",
                                     {"name": "", "spec": "length | area | volume | angle | number | integer | text | yes_no | material",
                                      "value?": "lengths in request units, m2, m3, degrees, true / false, material name, text",
@@ -952,7 +1033,11 @@ EDIT_GROUPS: dict[str, Group] = {
                               "with the room's name, number and height; the link is made room-bounding; regions that hold a space are skipped. Reports "
                               "spaces that are not enclosed.", {"link": "link instance id (list_links)", "levels?": "only these host levels",
                                                                  "room_bounding?": "default true", "level_tolerance?": "default 50", "phase?": "phase name", "max?": "default 2000"}),
-        "hvac_zone_create": ("Create an HVAC zone holding the given spaces (all on one level).", {"spaces": "list of space ids", "name?": "zone name"}),
+        "hvac_zone_create": ("Create an HVAC zone holding the given spaces (all on one level). Revit 2024: an HVAC zone. Revit 2027: a "
+                             "space-based system zone of a system zone type (type; create_type: true makes the type, its set points "
+                             "left at Revit's defaults for the engineer to set).",
+                             {"spaces": "list of space ids", "name?": "zone name", "type?": "Revit 2027: system zone type name (needed when there are several)",
+                              "create_type?": "Revit 2027: default false; true creates 'type' when missing"}),
         "space_airflow_set": ("Set spaces' design supply / return / exhaust airflow to the engineer's values (L/s); air_terminals compares them with "
                               "the terminals.", {"spaces": "list of space ids", "supply?": "L/s: one value or one per space", "return?": "", "exhaust?": ""}),
         "room_separation": ("Draw room (or space) separation lines on a level's plan.",
@@ -978,6 +1063,19 @@ EDIT_GROUPS: dict[str, Group] = {
                         "force": "[fx, fy, fz]", "moment?": "[mx, my, mz]", "point?": "point loads: " + XYZ + " on the member; default at_end",
                         "at_end?": "point loads: start (default) | end", "start?": "line loads: " + XYZ + " start of a part of the member; default all of it",
                         "end?": "line loads: " + XYZ, "points?": "area loads: list of " + XYZ + " corners of a region of the panel; default all of it"}),
+        "analytical_release_set": ("Set the end releases of analytical members as the engineer gives them: fixed, pinned, bending_moment, "
+                                   "or user with the released directions.",
+                                   {"members": "analytical member ids", "end?": "start | end | both (default)",
+                                    "release": "fixed | pinned | bending_moment | user",
+                                    "fx?": "release 'user' only: true = released, false or missing = fixed", "fy?": "as fx",
+                                    "fz?": "as fx", "mx?": "as fx", "my?": "as fx", "mz?": "as fx"}),
+        "boundary_condition_create": ("Place a support on the analytical model as given: a point at an analytical member's end, a line along a "
+                                      "member, or an area on an analytical panel. Presets fixed, pinned (translations fixed, rotations free), "
+                                      "roller (only Z fixed); 'user' takes each direction. No springs.",
+                                      {"kind": "point | line | area", "host": "analytical member id (point, line) or panel id (area)",
+                                       "end?": "point: start | end", "condition": "fixed | pinned | roller | user",
+                                       "x?": "condition 'user': fixed (default) | released", "y?": "as x", "z?": "as x",
+                                       "rx?": "as x (point, line)", "ry?": "as x (point only)", "rz?": "as x (point only)"}),
     },
     "Links": {
         "cad_link": ("Link (or import) a DWG / DXF file.",
@@ -1017,6 +1115,9 @@ EDIT_GROUPS: dict[str, Group] = {
                        {"folder": FOLDER, "overwrite?": OVERWRITE, "views?": VIEWS, "sheets?": SHEETS, "name_template?": NAME_TEMPLATE,
                         "setup?": "a DGN export setup saved in the model; default: Revit's defaults, then the model's setups (the one used is reported)",
                         "seed?": "full path of a .dgn seed file (needed when the model has no DGN setup and Revit's defaults fail)"}),
+        "export_step": ("Revit 2027: export what a 3D view shows to STEP (.stp).", {"folder": FOLDER, "name?": "default: the model name",
+                                                                                   "view?": "3D view; default the active 3D view, else {3D}",
+                                                                          "protocol?": "STEP application protocol, default Revit's", "overwrite?": OVERWRITE}),
         "export_schedule": ("Export a schedule to CSV.", {"schedule": "schedule name or id", "folder": FOLDER, "name?": "default: the schedule name", "overwrite?": OVERWRITE}),
         "save": ("Save the model.", {}),
         "save_as": ("Save the model under a new path (not for workshared models).", {"path": "full path ending in .rvt", "overwrite?": OVERWRITE}),

@@ -13,6 +13,10 @@ public class App : IExternalApplication
         {
             MainThread.Init();
             BridgeServer.Start(application.ControlledApplication.VersionNumber);
+            var ca = application.ControlledApplication;
+            ca.DocumentOpened += (s, e) => { try { DocumentTarget.Opened(e.Document); } catch { /* identity only */ } };
+            ca.DocumentCreated += (s, e) => { try { DocumentTarget.Opened(e.Document); } catch { /* identity only */ } };
+            ca.DocumentSavedAs += (s, e) => { try { DocumentTarget.Opened(e.Document); } catch { /* identity only */ } };
         }
         catch (Exception ex)
         {

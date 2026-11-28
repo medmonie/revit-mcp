@@ -58,6 +58,8 @@ def xlsx_path(params: dict[str, Any], must_exist: bool) -> Path:
     check_allowed(path)
     if must_exist and not path.exists():
         raise ValueError(f"'{path}' does not exist.")
+    if must_exist:
+        check_input_size(path)
     if not must_exist and path.exists() and not flag(params, "overwrite"):
         raise ValueError(f"'{path}' already exists. Pass overwrite: true to replace it.")
     return path
@@ -109,3 +111,50 @@ def header(ws, headers: list[str], key_columns: int = 0) -> None:
     for c, h in enumerate(headers, 1):
         ws.column_dimensions[get_column_letter(c)].width = max(12, min(40, len(h) + 4))
     ws.freeze_panes = ws.cell(row=2, column=key_columns + 1) if key_columns else "A2"
+
+
+# Budgets for workbooks read as input, checked before openpyxl expands anything.
+MAX_INPUT_BYTES = 25 * 1024 * 1024          # the .xlsx file itself
+MAX_EXPANDED_BYTES = 200 * 1024 * 1024      # all parts unzipped
+MAX_PARTS = 2000                            # zip entries
+MAX_RATIO = 200                             # expanded / compressed per part (zip bombs)
+MAX_ROWS = 50_000                           # rows per sheet read
+MAX_CELLS = 2_000_000                       # cells read in one call
+
+
+def check_input_size(path: Path) -> None:
+    """Refuse a workbook that is too large, or expands too far, before it is opened."""
+    import zipfile
+    size = path.stat().st_size
+    if size > MAX_INPUT_BYTES:
+        raise ValueError(f"'{path.name}' is {size / 1048576:.1f} MB; the limit for an input workbook is {MAX_INPUT_BYTES // 1048576} MB. Split it.")
+    try:
+        with zipfile.ZipFile(path) as z:
+            parts = z.infolist()
+    except zipfile.BadZipFile:
+        raise ValueError(f"'{path.name}' is not a valid .xlsx file.") from None
+    if len(parts) > MAX_PARTS:
+        raise ValueError(f"'{path.name}' has {len(parts)} parts; the limit is {MAX_PARTS}.")
+    total = 0
+    for part in parts:
+        total += part.file_size
+        if part.compress_size and part.file_size / part.compress_size > MAX_RATIO and part.file_size > 1048576:
+            raise ValueError(f"'{path.name}': part {part.filename} expands {part.file_size // part.compress_size}x; refused as unsafe.")
+    if total > MAX_EXPANDED_BYTES:
+        raise ValueError(f"'{path.name}' expands to {total / 1048576:.0f} MB; the limit is {MAX_EXPANDED_BYTES // 1048576} MB. Split it.")
+
+
+class CellBudget:
+    """Counts rows and cells while a workbook is streamed, so reading stops before anything is sent to Revit."""
+
+    def __init__(self, max_cells: int = MAX_CELLS, max_rows: int = MAX_ROWS):
+        self.cells = 0
+        self.max_cells = max_cells
+        self.max_rows = max_rows
+
+    def row(self, sheet: str, index: int, width: int) -> None:
+        if index - 1 > self.max_rows:
+            raise ValueError(f"{sheet}: more than {self.max_rows} rows; split the workbook. Nothing was sent to Revit.")
+        self.cells += width
+        if self.cells > self.max_cells:
+            raise ValueError(f"The workbook has more than {self.max_cells} cells to read; split it. Nothing was sent to Revit.")

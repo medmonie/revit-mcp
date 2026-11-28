@@ -24,7 +24,7 @@ internal static class DocumentActions
 
     public static string ScratchFolder => Path.Combine(Path.GetTempPath(), "RevitMcpScratch");
 
-    private static string Id(Document doc) => DocumentTarget.SessionId(DocumentTarget.ModelKey(doc));
+    private static string Id(Document doc) => DocumentTarget.SessionId(doc);
 
     private static readonly TimeSpan ScratchAge = TimeSpan.FromDays(7);
 
@@ -200,6 +200,14 @@ internal static class DocumentActions
         string title = doc.Title;
         string source = OwnedSource(doc);
         bool modified = doc.IsModified;
+        if (modified)
+        {
+            // Throwing away changes is an edit, not a read: it needs explicit intent and the edit permission.
+            if (!Flag(p, "discard_changes", false))
+                throw new InvalidOperationException($"'{title}' has unsaved changes. Nothing was closed. To close it and lose them, send model_close again with discard_changes: true (needs edit permission).");
+            if (!WriteGate.Granted)
+                throw new InvalidOperationException($"'{title}' has unsaved changes; discarding them needs edit permission (Revit's 'allow editing' dialog or the Allow Editing button). Nothing was closed.");
+        }
         if (!doc.Close(false)) throw new InvalidOperationException($"Revit did not close '{title}'.");
         ForgetClosed();
         DeleteScratch(source);
@@ -243,7 +251,7 @@ internal static class DocumentActions
     // ---------------------------------------------------------------- reads over several models
 
     private static readonly HashSet<string> NotBatchable = new HashSet<string>(StringComparer.Ordinal)
-    { "ping", "list_documents", "model_files", "model_open", "model_new", "model_close", "batch_read", "get_selection", "show_elements", "list_actions", "help", "get_edit_permission", "get_operation_status", "describe_api" };
+    { "ping", "list_documents", "model_files", "model_open", "model_new", "model_close", "batch_read", "get_selection", "show_elements", "list_actions", "help", "get_edit_permission", "get_operation_status", "describe_api", "pick", "watch_start", "watch_changes", "watch_stop", "preview_show", "preview_clear", "revit_addins" };
 
     public static object BatchRead(Rc rc, Obj p)
     {

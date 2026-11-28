@@ -100,7 +100,7 @@ def open_active(path, previous=None):
     if not new or o.get("alreadyOpen") or not o.get("active") or call("ping").get("documentId") != new:
         raise SystemExit(f"The test requires a newly opened, active copy of {Path(path).name}. No test edits were sent to it.")
     if previous:
-        cl = call("model_close", {"document_id": previous})
+        cl = call("model_close", {"document_id": previous, "discard_changes": True})
         out("model_close previous copy (changes discarded)", cl)
         check(f"previous copy closed without saving", cl.get("discardedChanges") in (True, False) and "closed" in cl)
     doc_id = new
@@ -413,7 +413,7 @@ if rw:
 
 # =============================================================================== leave: Task 04 active, the E copy closed without saving
 call("model_open", {"path": TASK04, "activate": True}, timeout=900)
-cl = call("model_close", {"document_id": el_id})
+cl = call("model_close", {"document_id": el_id, "discard_changes": True})
 out("model_close E (changes discarded)", cl)
 check("E copy closed without saving", cl.get("discardedChanges") is True)
 print("\nSKIPPED: " + "; ".join(SKIPPED) if SKIPPED else "\nSKIPPED: none", flush=True)

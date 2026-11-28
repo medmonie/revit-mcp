@@ -161,8 +161,11 @@ if MODE == "task04":
 
 # ============================================================================== scratch: real runs
 elif MODE == "scratch":
-    if info.get("path") or info.get("title", "").startswith(("Revit Task 04", "KTR")):
-        raise SystemExit("scratch mode needs a new, never saved project (no path); nothing edited.")
+    path = info.get("path") or ""
+    claude_scratch = "\\RevitMcpScratch\\" in path and next((d for d in call("list_documents").get("documents", [])
+                                                              if d.get("active") and d.get("openedByClaude")), None) is not None
+    if (path and not claude_scratch) or info.get("title", "").startswith(("Revit Task 04", "KTR")):
+        raise SystemExit("scratch mode needs a new, never saved project (no path) or a scratch made by model_new; nothing edited.")
     wall_t = first_type("walls", ("generic",))
     floor_t = first_type("floors", ("generic",))
     beam_t = first_type("beams", ("concrete",))
@@ -341,3 +344,4 @@ else:
 
 print("\nSKIPPED: " + "; ".join(SKIPPED) if SKIPPED else "\nSKIPPED: none", flush=True)
 print("ALL CHECKS AS EXPECTED" if not FAILED else "NOT AS EXPECTED: " + "; ".join(FAILED), flush=True)
+sys.exit(1 if FAILED else 0)

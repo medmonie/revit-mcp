@@ -396,6 +396,46 @@ def workbook_regressions() -> None:
     print("typed comparisons and partial Excel apply verified")
 
 
+def workbook_budget_checks() -> None:
+    """Input workbooks: size, expansion and cell budgets apply before anything is opened or sent."""
+    import zipfile
+    import xlsx_util
+    from openpyxl import Workbook
+    with tempfile.TemporaryDirectory() as tmp:
+        bomb = Path(tmp) / "bomb.xlsx"
+        with zipfile.ZipFile(bomb, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("xl/worksheets/sheet1.xml", "0" * (8 * 1024 * 1024))
+        try:
+            xlsx_util.check_input_size(bomb)
+            raise AssertionError("a highly compressed part must be refused")
+        except ValueError as e:
+            assert "unsafe" in str(e), e
+        notzip = Path(tmp) / "text.xlsx"
+        notzip.write_text("not a workbook")
+        try:
+            xlsx_util.check_input_size(notzip)
+            raise AssertionError("a non-zip .xlsx must be refused")
+        except ValueError as e:
+            assert "not a valid" in str(e), e
+        big = Path(tmp) / "rows.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Levels"
+        ws.append(["name", "elevation"])
+        for i in range(60):
+            ws.append([f"L{i}", i * 1000])
+        wb.save(big)
+        xlsx_util.check_input_size(big)   # small file: accepted
+        budget = xlsx_util.CellBudget(max_cells=100, max_rows=1000)
+        try:
+            for i in range(2, 62):
+                budget.row("Levels", i, 2)
+            raise AssertionError("the cell budget must stop the read")
+        except ValueError as e:
+            assert "Nothing was sent" in str(e), e
+    print("workbook budgets ok: bombs, non-zip files and too many cells are refused before reading")
+
+
 def static_checks() -> None:
     cs = (ROOT / "plugin" / "BridgeInfo.cs").read_text(encoding="utf-8")
     version = re.search(r'Version = "([\d.]+)"', cs).group(1)
@@ -520,6 +560,7 @@ def with_fake(coro, **env) -> None:
 
 if __name__ == "__main__":
     static_checks()
+    workbook_budget_checks()
     workbook_regressions()
     bbs_regression()
     client_config_regression()

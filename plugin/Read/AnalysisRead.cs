@@ -81,15 +81,38 @@ internal static class AnalysisRead
             ["id"] = a.Id.Value, ["role"] = a.StructuralRole.ToString(), ["thickness"] = U.Out(a.Thickness),
             ["material"] = doc.GetElement(a.MaterialId)?.Name, ["openings"] = a.GetAnalyticalOpeningsIds().Count, ["physical"] = Physical(a),
         }).ToList();
-        var supports = new FilteredElementCollector(doc).OfClass(typeof(BoundaryConditions)).Cast<BoundaryConditions>()
-            .GroupBy(b => b.GetBoundaryConditionsType().ToString()).Select(g => new { type = g.Key, count = g.Count() }).ToList();
+        var bcList = new FilteredElementCollector(doc).OfClass(typeof(BoundaryConditions)).Cast<BoundaryConditions>().ToList();
+        var supports = bcList.GroupBy(b => b.GetBoundaryConditionsType().ToString()).Select(g => new { type = g.Key, count = g.Count() }).ToList();
+        string Dofs(BoundaryConditions b, string kind)
+        {
+            // each direction as Revit holds it: F = fixed, R = released, S = spring
+            var keys = kind == "Point" ? new[] { "X", "Y", "Z", "ROT_X", "ROT_Y", "ROT_Z" }
+                     : kind == "Line" ? new[] { "X", "Y", "Z", "ROT_X" }
+                     : new[] { "X", "Y", "Z" };
+            var sb = new StringBuilder();
+            foreach (var k in keys)
+            {
+                if (!Enum.TryParse("BOUNDARY_DIRECTION_" + k, out BuiltInParameter bip)) { sb.Append('?'); continue; }
+                var v = b.get_Parameter(bip)?.AsInteger();
+                sb.Append(v == 0 ? 'F' : v == 1 ? 'R' : v == 2 ? 'S' : '?');
+            }
+            return sb.ToString();
+        }
+        var supportItems = bcList.Take(limit).Select(b =>
+        {
+            string kind = b.GetBoundaryConditionsType().ToString();
+            return new Obj { ["id"] = b.Id.Value, ["kind"] = kind, ["host"] = b.HostElementId?.Value,
+                             ["directions"] = Dofs(b, kind) };
+        }).ToList();
         return new
         {
             model = doc.Title, units = U.Name,
             members = new { count = members.Count, withoutPhysical = members.Count(m => (long)m["physical"] < 0), byRole = members.GroupBy(m => (string)m["role"]).Select(g => new { role = g.Key, count = g.Count() }).ToList(), items = members.Take(limit).ToList() },
             panels = new { count = panels.Count, withoutPhysical = panels.Count(m => (long)m["physical"] < 0), items = panels.Take(limit).ToList() },
             boundaryConditions = supports,
-            note = "physical = the associated physical element id (-1: none). Releases as Revit's release type.",
+            supports = supportItems,
+            note = "physical = the associated physical element id (-1: none). Releases as Revit's release type. Support directions in the "
+                 + "order x y z rx ry rz (line: x y z rx; area: x y z): F fixed, R released, S spring, ? unknown.",
         };
     }
 

@@ -40,6 +40,8 @@ internal static class EditEngine
         AnalysisOps.Register(Ops);
         MepOps.Register(Ops);
         AccessoryOps.Register(Ops);
+        ModelingOps.Register(Ops);
+        DocExtraOps.Register(Ops);
         FixtureOps.Register(Ops);
         ElectricalOps.Register(Ops);
     }
@@ -251,12 +253,13 @@ internal static class EditEngine
         if (joinRetries > 0)
             ctx.Warnings.Add($"join_overlaps: Revit could not cut joined elements {string.Join(", ", ctx.SkipJoin)}; the batch was run again "
                            + $"({joinRetries} time(s)) without joining them. They are listed under skippedCutConflict for review.");
-        Audit.Write("edit_applied", new { model, operationId, summary, operations = ops.Count, postCommitFailed,
+        bool logged = Audit.Write("edit_applied", new { model, operationId, summary, operations = ops.Count, postCommitFailed,
             warnings = ctx.Warnings.Count + failures.Warnings.Count });
         return new
         {
             applied = true, dryRun = false, model, units = U.Name, operations = ops.Count, results,
             postCommit, postCommitFailed, succeeded = postCommitFailed == 0,
+            auditLogged = logged, audit = logged ? null : Audit.Health,
             warnings = ctx.Warnings, revitWarnings = failures.Warnings,
             resolvedByRevit = failures.Resolved.Count > 0 ? failures.Resolved : null,
             note = "Committed as one transaction (one Undo step in Revit: '" + title + "').",

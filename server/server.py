@@ -381,7 +381,7 @@ def _dispatch(action: str, params: dict[str, Any] | None, allow_read: bool, allo
     if name in catalog.READ_ACTIONS:
         # Opening and creating models can take minutes; batch_read has its own budget.
         timeout = (_batch_timeout(params) if name == "batch_read"
-                   else EDIT_TIMEOUT if name in {"model_open", "model_new"} else READ_TIMEOUT)
+                   else EDIT_TIMEOUT if name in {"model_open", "model_new", "pick", "performance_adviser"} else READ_TIMEOUT)
         return _note_ignored(name, params, call(name, params, timeout=timeout, report_unread=True))
     if name in catalog.EDIT_OPS:
         raise ValueError(f"'{name}' is an edit operation: call action='edit' with params={{\"operations\": [{{\"op\": \"{name}\", ...}}]}}.")
@@ -489,4 +489,14 @@ if __name__ == "__main__":
         if sys.argv[1] == "--configure-clients" and len(sys.argv) != 3:
             sys.exit("usage: revit-mcp-server.exe --configure-clients <path of the installed exe>")
         sys.exit(client_config.run(sys.argv[2] if sys.argv[1] == "--configure-clients" else None))
-    mcp.run()  # stdio transport: nothing in this process may write to stdout
+    try:
+        mcp.run()  # stdio transport: nothing in this process may write to stdout
+    finally:
+        # The stdio transport closes the standard streams at end of input. The frozen exe's launcher flushes them once
+        # more after Python returns, which printed "ValueError: I/O operation on closed file" to stderr. Point any
+        # closed standard stream at the null device so that last flush is harmless.
+        import os
+        for name in ("stdout", "stderr", "__stdout__", "__stderr__"):
+            stream = getattr(sys, name, None)
+            if stream is not None and getattr(stream, "closed", False):
+                setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))

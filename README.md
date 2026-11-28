@@ -1,6 +1,6 @@
 # Revit MCP bridge
 
-**Version 0.29 · Autodesk Revit 2027 and 2024 · Windows**
+**Version 0.30 · Autodesk Revit 2027 and 2024 · Windows**
 
 Lets Claude work in the model that is open in Revit on this computer: read it, measure it, check it, and, after you allow
 it once per Revit session, build and fix it. One tool covers modelling, editing, quantity surveying, model QA, CAD to
@@ -59,7 +59,7 @@ the package includes the MCP server as one exe, so no Python, no .NET SDK and no
 3. Start Claude Desktop again.
 4. Start Revit. The first time it asks whether to load the unsigned add-in: choose **Always Load**. A panel
    **Claude MCP** appears on the **Add-Ins** tab.
-5. Open a model and ask: *"Ping Revit and tell me which model is open."* The answer shows the add-in version (0.29.0),
+5. Open a model and ask: *"Ping Revit and tell me which model is open."* The answer shows the add-in version (0.30.0),
    the Revit version, and the active model's `documentId`.
 
 **ChatGPT desktop app.** It shares Codex's settings file (`~/.codex/config.toml`), so the `revit` entry that
@@ -432,7 +432,7 @@ geometry; cover is to the outer face of the outermost bar. Review the bars in a 
 
 ## 5. Feature reference
 
-One tool, `revit(action, params)`: 72 read actions, 9 server actions, 4 worksharing actions and 156 edit operations inside the single `edit`
+One tool, `revit(action, params)`: 80 read actions, 9 server actions, 4 worksharing actions and 171 edit operations inside the single `edit`
 action. Parameters for every one: [docs/ACTIONS.md](docs/ACTIONS.md).
 
 ### 5.1 Read actions (never change the model)

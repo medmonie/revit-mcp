@@ -5,17 +5,19 @@ setlocal
 cd /d "%~dp0"
 set "LOG=%~dp0install_result.txt"
 echo Revit MCP bridge install  %DATE% %TIME% > "%LOG%"
-rem Options: /this_user (install for the account running this window), /claude_open (do not stop for Claude Desktop)
-set "THIS_USER=" & set "CLAUDE_OPEN="
+rem Options: /this_user (install for the account running this window), /claude_open (do not stop for Claude Desktop),
+rem /no_pause (never wait for a key: for scripted installs)
+set "THIS_USER=" & set "CLAUDE_OPEN=" & set "NO_PAUSE="
 for %%A in (%*) do (
   if /i "%%~A"=="/this_user" set "THIS_USER=1"
   if /i "%%~A"=="/claude_open" set "CLAUDE_OPEN=1"
+  if /i "%%~A"=="/no_pause" set "NO_PAUSE=1"
 )
 
 tasklist /fi "imagename eq Revit.exe" | find /i "Revit.exe" >nul && (
   echo Revit is running. Close Revit and run install.bat again.
   echo RESULT=STOPPED: Revit running >> "%LOG%"
-  pause
+  if not defined NO_PAUSE pause
   exit /b 1
 )
 rem Claude Desktop keeps its settings in memory and can write them back over the "revit" entry added here; it also
@@ -25,13 +27,13 @@ if not defined CLAUDE_OPEN tasklist /fi "imagename eq claude.exe" | find /i "cla
   echo ^(tray icon ^> Quit^), then run install.bat again.
   echo It is started again after the install. ^(install.bat /claude_open installs anyway.^)
   echo RESULT=STOPPED: Claude Desktop running >> "%LOG%"
-  pause
+  if not defined NO_PAUSE pause
   exit /b 1
 )
 if not exist "revit-mcp-server.exe" (
   echo revit-mcp-server.exe is missing next to install.bat. Unzip the whole package first.
   echo RESULT=FAILED: server exe missing >> "%LOG%"
-  pause
+  if not defined NO_PAUSE pause
   exit /b 1
 )
 
@@ -53,7 +55,7 @@ for /d %%D in ("addin\*") do call :addin %%~nxD
 if not defined INSTALLED (
   echo No Revit 2024 or 2027 found on this PC. Install Revit, then run install.bat again.
   echo RESULT=FAILED: no matching Revit >> "%LOG%"
-  pause
+  if not defined NO_PAUSE pause
   exit /b 1
 )
 
@@ -63,7 +65,7 @@ if not exist "%SRV%" mkdir "%SRV%"
 copy /y "revit-mcp-server.exe" "%SRV%\" >> "%LOG%" 2>&1 || (
   echo Could not copy the server to %SRV%. If an MCP client is running it, quit the client and try again.
   echo RESULT=FAILED: server copy >> "%LOG%"
-  pause
+  if not defined NO_PAUSE pause
   exit /b 1
 )
 set "EXE=%SRV%\revit-mcp-server.exe"
@@ -111,7 +113,7 @@ echo   1. Fully quit Claude Desktop (tray icon ^> Quit) and start it again.
 echo   2. Start Revit. When it asks about loading "Revit MCP bridge", choose Always Load.
 echo   3. Open a model and ask Claude: "Ping Revit and tell me which model is open."
 echo ChatGPT desktop app: it reads the Codex settings above ^(~/.codex/config.toml^); restart it to see revit under Settings ^> MCP servers.
-pause
+if not defined NO_PAUSE pause
 exit /b 0
 
 :other_user
@@ -121,7 +123,7 @@ echo The add-in and the server would go into %USERPROFILE%, where Revit for the 
 echo Close this window and double-click install.bat as the user who runs Revit. It needs no administrator rights,
 echo so do not use Run as administrator. To install for %USERNAME% on purpose, run:  install.bat /this_user
 echo RESULT=STOPPED: running as another account than the desktop user >> "%LOG%"
-pause
+if not defined NO_PAUSE pause
 exit /b 1
 
 :addin

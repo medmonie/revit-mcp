@@ -171,10 +171,50 @@ internal static class SpaceOps
     /// <summary>An HVAC zone holding the spaces given (all on one level), with a name.</summary>
     private static object ZoneCreate(EditContext c, Obj p)
     {
-#if REVIT2027
-        throw new NotSupportedException("Revit 2027 replaced HVAC zones (Zone.AddSpaces) with system zones (GenericZone); hvac_zone_create works in Revit 2024 only for now.");
-#else
         var doc = c.Doc;
+#if REVIT2027
+        {
+            // Revit 2027: HVAC zones are system zones (GenericZone, space based) of a system zone type.
+            var spaces27 = Ids(p, "spaces", 2000).Select(id => NeedSpace(c, id)).ToList();
+            var level27 = spaces27[0].Level ?? throw new ArgumentException($"Space {spaces27[0].Id.Value} has no level.");
+            var other27 = spaces27.Where(s => s.Level?.Id != level27.Id).Select(s => s.Id.Value).ToList();
+            if (other27.Count > 0) throw new ArgumentException($"A zone is made on one level: spaces {string.Join(", ", other27)} are not on '{level27.Name}'.");
+            var types = new FilteredElementCollector(doc).OfClass(typeof(Autodesk.Revit.DB.Mechanical.SystemZoneElementType))
+                .Cast<Autodesk.Revit.DB.Mechanical.SystemZoneElementType>()
+                .Where(t => t.GeometricDefinition.ToString().IndexOf("Space", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+            Autodesk.Revit.DB.Mechanical.SystemZoneElementType zt;
+            string tname = Str(p, "type");
+            bool madeType = false;
+            if (tname != null)
+            {
+                zt = types.FirstOrDefault(t => t.Name.Equals(tname, StringComparison.OrdinalIgnoreCase));
+                if (zt == null)
+                {
+                    if (!Flag(p, "create_type", false))
+                        throw new ArgumentException($"No space-based system zone type '{tname}'. Types: {(types.Count == 0 ? "none" : string.Join(", ", types.Select(t => t.Name)))}. Pass create_type: true to make it (its set points stay Revit's defaults; set them in Revit).");
+                    zt = Autodesk.Revit.DB.Mechanical.SystemZoneElementType.CreateSpaceBased(doc, tname);
+                    madeType = true;
+                }
+            }
+            else
+            {
+                if (types.Count == 0) throw new ArgumentException("The model has no space-based system zone type. Give 'type' with create_type: true, or make one in Revit.");
+                if (types.Count > 1) throw new ArgumentException($"Several system zone types: {string.Join(", ", types.Select(t => t.Name))}. Give 'type'.");
+                zt = types[0];
+            }
+            var taken = new FilteredElementCollector(doc).OfClass(typeof(Autodesk.Revit.DB.Analysis.GenericZone)).Cast<Autodesk.Revit.DB.Analysis.GenericZone>()
+                .SelectMany(z => { try { return z.GetSpaceIds().Select(i => (zone: z, id: i)); } catch { return Enumerable.Empty<(Autodesk.Revit.DB.Analysis.GenericZone zone, ElementId id)>(); } })
+                .Where(x => spaces27.Any(s => s.Id == x.id)).ToList();
+            if (taken.Count > 0)
+                throw new ArgumentException("Already in a system zone: " + string.Join(", ", taken.Select(x => $"space {x.id.Value} in '{x.zone.Name}'")) + ".");
+            var ids = new HashSet<ElementId>(spaces27.Select(s => s.Id));
+            string zname = Str(p, "name") ?? "Zone";
+            var gz = Autodesk.Revit.DB.Analysis.GenericZone.CreateSpaceBased(doc, zt.Id, zname, Autodesk.Revit.DB.Mechanical.SystemZoneData.Create(), level27.Id, ids);
+            doc.Regenerate();
+            return new { id = gz.Id.Value, name = gz.Name, kind = "system zone (Revit 2027)", type = zt.Name, typeCreated = madeType, level = level27.Name,
+                         spaces = gz.GetSpaceIds().Count, areaM2 = U.Area(gz.Area) };
+        }
+#else
         var spaces = Ids(p, "spaces", 2000).Select(id => NeedSpace(c, id)).ToList();
         var level = spaces[0].Level ?? throw new ArgumentException($"Space {spaces[0].Id.Value} has no level.");
         var other = spaces.Where(s => s.Level?.Id != level.Id).Select(s => s.Id.Value).ToList();

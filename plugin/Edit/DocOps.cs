@@ -480,7 +480,7 @@ internal static class DocOps
             if (refs.Size < 2) continue;
             double line = maxAcross + offset;
             XYZ a = d * first + across * line + XYZ.BasisZ * z, b = d * last + across * line + XYZ.BasisZ * z;
-            var dim = doc.Create.NewDimension(view, Line.CreateBound(a, b), refs);
+            var dim = DocExtraOps.LinearDim(doc, p, view, Line.CreateBound(a, b), refs);
             made.Add(new { id = dim.Id.Value, direction = axis, references = refs.Size });
         }
         if (made.Count == 0) throw new ArgumentException("Found no faces square to x or y to dimension (rotated elements need a rotated dimension; not supported yet).");

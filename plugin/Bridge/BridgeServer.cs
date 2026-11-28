@@ -233,7 +233,30 @@ internal static class BridgeServer
             if (Interlocked.Increment(ref _connections) > MaxConnections)
             {
                 Interlocked.Decrement(ref _connections);
-                client.Close();
+                // say why instead of dropping the connection: the caller can retry when Revit has caught up.
+                // The request is drained before the socket closes, so the reply is not lost to a reset.
+                var busy = client;
+                new Thread(() =>
+                {
+                    try
+                    {
+                        using (busy)
+                        {
+                            var s = busy.GetStream();
+                            s.WriteTimeout = 2000;
+                            s.ReadTimeout = 2000;
+                            byte[] reply = new UTF8Encoding(false).GetBytes(Error(null,
+                                $"Revit is busy: {MaxConnections} bridge connections are already open (a command or dialog may be holding Revit). Nothing was run; retry in a moment.") + "\n");
+                            s.Write(reply, 0, reply.Length);
+                            s.Flush();
+                            busy.Client.Shutdown(System.Net.Sockets.SocketShutdown.Send);
+                            var sink = new byte[8192];
+                            int total = 0, n;
+                            while (total < 4 * 1024 * 1024 && (n = s.Read(sink, 0, sink.Length)) > 0) total += n;
+                        }
+                    }
+                    catch { /* the caller went away */ }
+                }) { IsBackground = true, Name = "RevitMcpBridge busy" }.Start();
                 continue;
             }
             try

@@ -120,17 +120,37 @@ TEST_MODEL = "KTR15-G26-Z2-X-S-RC-RFT-ZZ-20100-00"
 CENTRAL = ("sync_with_central", "relinquish")   # since 0.26.5 Revit asks for these every time
 
 
+def poll(method, params, done, minutes=3):
+    """Resend until done(res). While the question is open in Revit, Revit is not idle, so a resend can come back
+    'did not become available' after 30 s: that only means the user has not answered yet, so keep waiting."""
+    end = time.time() + minutes * 60
+    res = None
+    while time.time() < end:
+        time.sleep(3)
+        try:
+            res = call(method, params, timeout=900)   # a new request each time; the approval is used once
+        except Exception as exc:
+            if "did not become available" in str(exc):
+                print("  (the question is still open in Revit; waiting)", flush=True)
+                continue
+            raise
+        if done(res):
+            return res
+    return res
+
+
+ASKED_FIRST = []   # (title, first response was the central-model question) for every central action
+
+
 def ws(title, method, params=None, expect_error=False, contains=None):
     try:
         res = call(method, params or {}, timeout=900)
+        if method in CENTRAL and not expect_error:
+            ASKED_FIRST.append((title, isinstance(res, dict) and res.get("permission") == "not granted"))
         if method in CENTRAL and not expect_error and isinstance(res, dict) and res.get("permission") == "not granted":
             print(f"{method}: click Yes in Revit's dialog 'Claude - change the central model?' "
                   "(waiting up to 3 minutes) ...", flush=True)
-            for _ in range(60):
-                time.sleep(3)
-                res = call(method, params or {}, timeout=900)   # a new request each time; the approval is used once
-                if not (isinstance(res, dict) and res.get("permission") == "not granted"):
-                    break
+            res = poll(method, params or {}, lambda r: not (isinstance(r, dict) and r.get("permission") == "not granted"))
     except Exception as exc:
         print(f"===== {title}\n{'EXPECTED ERROR' if expect_error else 'FAILED'}: {exc}", flush=True)
         if not expect_error or (contains and contains not in str(exc)):
@@ -145,8 +165,31 @@ def ws(title, method, params=None, expect_error=False, contains=None):
 if info.get("title") != TEST_MODEL:
     raise SystemExit(f"The active model is '{info.get('title')}', not the test model {TEST_MODEL}; nothing done.")
 ensure_permission()
+t0 = time.time()
 st = read("worksharing_status", "worksharing_status", {})
+took = time.time() - t0
 check("cloud workshared model", st and st.get("workshared") and st.get("cloud"), json.dumps({k: st.get(k) for k in ("central", "user", "cloud")}))
+# the ownership scan asks the central model about each element: it stops after 5 s and says so
+check("ownership scan reports what it covered", st and isinstance(st.get("elementsScanned"), int) and isinstance(st.get("scanComplete"), bool),
+      json.dumps({k: st.get(k) for k in ("elementsScanned", "scanComplete", "scanNote")}) + f" ({took:.1f} s for the read)")
+if st and st.get("scanComplete") is False:
+    check("an incomplete scan stopped near 5 s and says so", took < 20 and "5 s" in (st.get("scanNote") or ""), f"{took:.1f} s; {st.get('scanNote')}")
+else:
+    print(f"----- note: the scan covered all {st.get('elementsScanned')} elements in {took:.1f} s (under the 5 s limit, so the cut-off did not apply)", flush=True)
+
+# a central-model action declined in Revit: nothing happens, and a resend is refused for a short while
+print("\n>>> NEXT DIALOG: 'Claude - change the central model?' for RELINQUISH. Please click **No** (waiting up to 3 minutes) ...", flush=True)
+first = call("relinquish", {"what": "all", "confirm": True}, timeout=300)
+out("relinquish: first response (the question is shown in Revit)", first)
+check("first response asks, changes nothing", first.get("permission") == "not granted" and first.get("applied") is False, json.dumps(first)[:300])
+declined = poll("relinquish", {"what": "all", "confirm": True},
+                lambda r: r.get("applied") or "declined" in str(r.get("reason", "")))
+out("relinquish: resend after the answer", declined)
+check("after No: nothing applied, the resend is refused ('declined a moment ago')", declined is not None and declined.get("applied") is False
+      and "declined in Revit a moment ago" in str(declined.get("reason", "")), json.dumps(declined)[:300])
+print("waiting 35 s for the decline cool-down to pass ...", flush=True)
+time.sleep(35)
+print("\n>>> NEXT DIALOGS: three 'Claude - change the central model?' questions (relinquish, sync, sync). Please click **Yes** on each.", flush=True)
 cols = (read("columns", "get_elements", {"category": "columns", "limit": 3, "params": ["Comments"]}, show=False) or {}).get("elements", [])
 col = cols[0]["id"] if cols else None
 old_comment = (cols[0].get("params") or {}).get("Comments") if cols else None
@@ -181,5 +224,6 @@ sy2 = ws("sync again, value restored, relinquish borrowed (confirm)", "sync_with
 st = read("final status", "worksharing_status", {"ids": [col]})
 row = (st.get("elements") or [{}])[0]
 check("final: current with central, not held", row.get("updates") == "CurrentWithCentral" and row.get("checkout") == "NotOwned", json.dumps(row))
+check("every central action was asked in Revit first (an approval is used once)", ASKED_FIRST and all(a for _, a in ASKED_FIRST), json.dumps(ASKED_FIRST))
 print("\nSKIPPED: " + "; ".join(SKIPPED) if SKIPPED else "\nSKIPPED: none", flush=True)
 print("ALL CHECKS AS EXPECTED" if not FAILED else "NOT AS EXPECTED: " + "; ".join(FAILED), flush=True)

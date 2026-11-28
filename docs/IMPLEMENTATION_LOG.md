@@ -1,5 +1,38 @@
 # Revit MCP implementation log
 
+## 2026-11-28 · Version 0.30.0 (phases 15, 16 and 18 closed; 0.26.3 audit items fixed)
+
+Mohamed asked to finish phases 15, 16 and 18 with the items listed, create analytical items (no model had any) and make
+sure analytical works on Revit 2024. Live tests in scratch projects made by model_new (closed without saving); Task 04
+opened read-only and closed unchanged (on 2027: upgraded in memory, never saved).
+
+New files: Edit/ModelingOps.cs (parts, arrays, reference planes, align_lock), Edit/DocExtraOps.cs (colour fill, dimension
+type, sheet collections, STEP, ACC parameters), Read/SessionRead.cs (performance_adviser, pick, watch_*, preview_*),
+tools/probe_exe.py, tests/live_v030.py, live_v030b.py, live_v030c.py, live_v030_pair.py, live_2027_chain.py.
+80 reads, 171 edit operations. Both years 0 / 0, smoke ALL OK (workbook budget checks added).
+
+| Run | Result |
+| --- | --- |
+| Build 1 | probe_exe caught the frozen exe's 'I/O operation on closed file' at end of input and refused to promote; fixed in server.py (closed std streams pointed at devnull). Promotion later failed once because paused install windows held dist\RevitMcp; the previous build was restored as designed; install.bat /no_pause added for the test installer |
+| live_v030, 2027 | all but: test category name 'MEP Spaces' (alias spaces added); support 'preset' parameter is the support kind (dropped; direction states read instead) |
+| live_v030, 2024 / 2027 | analytical members, panel, releases (pinned, user), supports (FFFFFF / FFFRRR / RFFR / FFF), load cases, combination, loads; HVAC zone (2024) and system zone (2027); key schedules; family_parameters (new type 450 -> formula 900); staged exports; Task 04 reopened gets id ':2', the old id refused; close guard; audit health; 40 concurrent pings. Percentage fields: refused by Revit's API in both years (now reported as not possible). Final runs ALL CHECKS AS EXPECTED on both years |
+| live_v030b, 2024 / 2027 | parts create / divide / merge, linear and radial arrays, reference plane + align_lock (moved 347.6 then locked), Performance Adviser (17 rules), watch (added / modified / deleted), preview (13 lines), pick (Mohamed clicked a wall), colour fill scheme with legend, dimension type, sheet collection (2027), ACC refusals, DWG export, CAD link reload, gbXML. Fixed on the way: CAD reload needs its own transaction; radial plain copies listed the original; count < 2 refused before the arrayable check; STEP needs a 3D view; gbXML ground plane / export category. Final: ALL CHECKS AS EXPECTED on 2024; on 2027 STEP and gbXML confirmed by live_v030c. DGN skipped with the reason: no DGN setup in the template and no seed file installed with Revit on this PC |
+| live_p10 on 2027 | scratch: ALL CHECKS AS EXPECTED (0.22.0: rooms, spaces, crossings and openings, analytical associated with physical, loads, combinations). task04 (dry runs): ALL CHECKS AS EXPECTED, Task 04 unchanged |
+| revit_addins | 2024: ResultsExplorer, ResultsBuilder, MemberForces, SectionProperties, StructuralRibbon, SteelConnections. 2027: AnalyticalAutomationTools, HCLoadsAnalysis, SteelConnections |
+
+## 2026-11-28 · Central-model question and ownership scan tested live (0.29.0, no code change in the add-in)
+
+The audit features added in 0.26.5 / 0.26.6 had not run on a central model. tests/live_ws.py gained: a timed
+worksharing_status with elementsScanned / scanComplete checks; a relinquish answered **No** in Revit (nothing changes, the
+resend is refused with "declined in Revit a moment ago"), a 35 s cool-down, then the Yes flow; and a check that every
+relinquish and sync was asked in Revit first (an approval is used once). Model: the cloud TEST model
+KTR15-G26-Z2-X-S-RC-RFT-ZZ-20100-00 (Mohamed answered every dialog).
+
+| Run | Result |
+| --- | --- |
+| 1 | Yes was clicked on the dialog meant for No, so the Yes path ran: asked first, nothing changed, applied after Yes. Test bug: while the question is open, Revit is not idle and a resend returns "did not become available within 30 s" after 30 s; the script treated that as a failure, so one relinquish was counted as failed when the answer took longer than 30 s. Fixed with a poll() helper that keeps waiting on that reply (up to 3 minutes) |
+| 2 | ALL CHECKS AS EXPECTED. No: nothing applied, resend refused. Yes: checkout, relinquish all, real Comments edit, sync relinquish all, reload_latest, value restored, sync relinquish borrowed; the model ends with nothing held and nothing unsaved. Each of the three central actions was asked in Revit first. The ownership scan covered all 8424 elements in under 0.1 s, so the 5 s cut-off did not trigger on this model (it remains untested on a larger central) |
+
 ## 2026-11-28 · Version 0.29.0 (phase 18 completed: sleeves, plumbing / fire fighting, electrical, trays, report)
 
 New: Edit/FixtureOps.cs (mep_fixture_place), Edit/ElectricalOps.cs (electrical_circuit_create / edit, electrical_panel_set),

@@ -17,7 +17,7 @@ internal static class ModelRead
             revitName = app.VersionName,
             revitBuild = app.VersionBuild,
             activeModel = ui?.Document.Title,
-            documentId = DocumentTarget.SessionId(modelKey), modelKey,
+            documentId = DocumentTarget.SessionId(ui?.Document), modelKey,
             activeView = view,
             editingAllowed = WriteGate.Granted,
             units = "lengths are " + U.Name + " (set params.units to mm, cm, m, ft or in); areas m2, volumes m3, angles degrees",
@@ -31,7 +31,7 @@ internal static class ModelRead
         var o = new Obj
         {
             ["title"] = doc.Title, ["path"] = doc.PathName, ["isFamilyDocument"] = doc.IsFamilyDocument,
-            ["documentId"] = DocumentTarget.SessionId(modelKey), ["modelKey"] = modelKey,
+            ["documentId"] = DocumentTarget.SessionId(doc), ["modelKey"] = modelKey,
             ["isWorkshared"] = doc.IsWorkshared, ["isReadOnly"] = doc.IsReadOnly, ["hasUnsavedChanges"] = doc.IsModified,
             ["activeView"] = doc.ActiveView?.Name,
         };
@@ -215,5 +215,67 @@ internal static class ModelRead
         o["total"] = all.Count;
         o["byText"] = summary;
         return o;
+    }
+
+    /// <summary>
+    /// What this Revit has loaded: add-in applications (from their .addin manifests) with their files, Revit's optional
+    /// exporters, and whether the analytical model, loads and steel connection types are available in the active model.
+    /// For checking that separately installed tools (structural analysis, steel connections, exporters) are really there.
+    /// </summary>
+    public static object RevitAddins(Rc rc, Obj p)
+    {
+        var apps = new List<Obj>();
+        try
+        {
+            foreach (var a in rc.App.LoadedApplications)
+            {
+                var t = a.GetType();
+                string file = null;
+                try { file = t.Assembly.Location; } catch { /* dynamic */ }
+                apps.Add(new Obj { ["application"] = t.FullName, ["assembly"] = t.Assembly.GetName().Name,
+                                   ["version"] = t.Assembly.GetName().Version?.ToString(), ["file"] = file });
+            }
+        }
+        catch (Exception ex) { apps.Add(new Obj { ["error"] = ex.Message }); }
+        var doc = rc.App.ActiveUIDocument?.Document;
+        object model = null;
+        if (doc != null && !doc.IsFamilyDocument)
+        {
+            int Count(Type t) { try { return new FilteredElementCollector(doc).OfClass(t).GetElementCount(); } catch { return -1; } }
+            model = new
+            {
+                title = doc.Title,
+                analyticalMembers = Count(typeof(Autodesk.Revit.DB.Structure.AnalyticalMember)),
+                analyticalPanels = Count(typeof(Autodesk.Revit.DB.Structure.AnalyticalPanel)),
+                loadCases = Count(typeof(Autodesk.Revit.DB.Structure.LoadCase)),
+                boundaryConditions = Count(typeof(Autodesk.Revit.DB.Structure.BoundaryConditions)),
+                steelConnectionTypes = Count(typeof(Autodesk.Revit.DB.Structure.StructuralConnectionHandlerType)),
+                steelConnections = Count(typeof(Autodesk.Revit.DB.Structure.StructuralConnectionHandler)),
+            };
+        }
+        bool Has(Func<bool> f) { try { return f(); } catch { return false; } }
+        List<string> Matching(params string[] words) => apps
+            .Where(a => words.Any(w => (((string)a["application"] ?? "") + " " + ((string)a["file"] ?? "")).IndexOf(w, StringComparison.OrdinalIgnoreCase) >= 0))
+            .Select(a => (string)a["application"]).OrderBy(x => x).ToList();
+        return new
+        {
+            revit = rc.App.Application.VersionName, build = rc.App.Application.VersionBuild,
+            count = apps.Count,
+            exporters = new
+            {
+                navisworks = Has(OptionalFunctionalityUtils.IsNavisworksExporterAvailable),
+                ifc = Has(OptionalFunctionalityUtils.IsIFCAvailable),
+                dgn = Has(OptionalFunctionalityUtils.IsDGNExportAvailable),
+                dwg = Has(OptionalFunctionalityUtils.IsDWGExportAvailable),
+                dxf = Has(OptionalFunctionalityUtils.IsDXFExportAvailable),
+            },
+            structuralAnalysis = Matching("StructuralAnalysis", "Structural Analysis", "Robot", "AnalysisInCloud", "AnalyzeInCloud",
+                                          "Analytical", "LoadsAnalysis", "StructuralLoads", "RSA.", "ResultsExplorer", "ResultsBuilder",
+                                          "MemberForces", "SectionProperties", "StructuralRibbon").Where(n => n.IndexOf("Electrical", StringComparison.OrdinalIgnoreCase) < 0).ToList(),
+            steelConnections = Matching("SteelConnection", "Steel Connection", "AdvanceSteel", "Advance Steel", "SteelDesign"),
+            applications = apps.OrderBy(a => (string)a["application"]).ToList(),
+            activeModel = model,
+            note = "The analytical model itself (members, panels, loads, supports) is part of Revit's API; analysis and steel connection tools come from separately installed add-ins listed here.",
+        };
     }
 }

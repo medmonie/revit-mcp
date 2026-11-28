@@ -15,6 +15,122 @@ internal static class AnalysisOps
         ops["load_case_create"] = LoadCaseCreate;
         ops["load_combination_create"] = CombinationCreate;
         ops["load_place"] = LoadPlace;
+        ops["analytical_release_set"] = ReleaseSet;
+        ops["boundary_condition_create"] = BoundaryCreate;
+    }
+
+    // ---------------------------------------------------------------- releases and supports (as the engineer gives them)
+
+    private static AnalyticalMember NeedMember(EditContext c, ElementId id) =>
+        c.Doc.GetElement(id) as AnalyticalMember
+        ?? throw new ArgumentException($"{id.Value} is not an analytical member. Use analytical_model.");
+
+    private static object ReleaseSet(EditContext c, Obj p)
+    {
+        var members = Ids(p, "members", 2000).Select(id => NeedMember(c, id)).ToList();
+        string end = Choice(p, "end", "both", "start", "end", "both");
+        string kind = Choice(p, "release", null, "fixed", "pinned", "bending_moment", "user");
+        var ends = end == "both" ? new[] { true, false } : new[] { end == "start" };
+        string[] dof = { "fx", "fy", "fz", "mx", "my", "mz" };
+        if (kind == "user" && !dof.Any(d => Has(p, d)))
+            throw new ArgumentException("release 'user' needs the released directions: fx, fy, fz, mx, my, mz (true = released, false = fixed; missing = fixed).");
+        if (kind != "user" && dof.Any(d => Has(p, d)))
+            throw new ArgumentException("fx .. mz are only for release 'user'.");
+        var rows = new List<Obj>();
+        foreach (var m in members)
+        {
+            c.Editable(m);
+            foreach (bool start in ends)
+            {
+                if (kind == "user")
+                {
+                    m.SetReleaseType(start, ReleaseType.UserDefined);
+                    m.SetReleaseConditions(new ReleaseConditions(start, Flag(p, "fx", false), Flag(p, "fy", false), Flag(p, "fz", false),
+                                                                 Flag(p, "mx", false), Flag(p, "my", false), Flag(p, "mz", false)));
+                }
+                else m.SetReleaseType(start, kind == "fixed" ? ReleaseType.Fixed : kind == "pinned" ? ReleaseType.Pinned : ReleaseType.BendingMoment);
+            }
+            var conds = m.GetReleaseConditions();
+            Obj State(bool start)
+            {
+                var rc = conds.FirstOrDefault(x => x.Start == start);
+                return new Obj { ["type"] = m.GetReleaseType(start).ToString(),
+                                 ["released"] = rc == null ? null : (object)dof.Where((d, i) => new[] { rc.Fx, rc.Fy, rc.Fz, rc.Mx, rc.My, rc.Mz }[i]).ToList() };
+            }
+            rows.Add(new Obj { ["id"] = m.Id.Value, ["start"] = State(true), ["end"] = State(false) });
+        }
+        return new { changed = rows.Count, items = rows };
+    }
+
+
+    private static TranslationRotationValue Dof(Obj p, string key, bool presetFixed, bool user)
+    {
+        if (!user) return presetFixed ? TranslationRotationValue.Fixed : TranslationRotationValue.Release;
+        string v = Choice(p, key, "fixed", "fixed", "released");
+        return v == "fixed" ? TranslationRotationValue.Fixed : TranslationRotationValue.Release;
+    }
+
+    /// <summary>
+    /// Supports on the analytical model: a point at a member end, a line along a member or a panel edge... as given.
+    /// Presets: fixed (all fixed), pinned (translations fixed, rotations released), roller (only Z fixed).
+    /// 'user' takes x, y, z, rx, ry, rz as fixed | released. Springs are not set here.
+    /// </summary>
+    private static object BoundaryCreate(EditContext c, Obj p)
+    {
+        var doc = c.Doc;
+        string kind = Choice(p, "kind", null, "point", "line", "area");
+        string cond = Choice(p, "condition", null, "fixed", "pinned", "roller", "user");
+        bool user = cond == "user";
+        bool[] fixedT = cond == "roller" ? new[] { false, false, true } : new[] { true, true, true };
+        bool fixedR = cond == "fixed";
+        string[] keys = { "x", "y", "z", "rx", "ry", "rz" };
+        if (!user && keys.Any(k => Has(p, k))) throw new ArgumentException("x, y, z, rx, ry, rz are only for condition 'user'.");
+        var host = Find.Elem(doc, NeedId(p, "host"));
+        Reference r;
+        BoundaryConditions bc;
+        if (kind == "point")
+        {
+            var m = host as AnalyticalMember ?? throw new ArgumentException("A point support goes at an end of an analytical member: 'host' must be one.");
+            string end = Choice(p, "end", null, "start", "end");
+            var curve = m.GetCurve();
+            r = m.GetReference(new AnalyticalModelSelector(curve, end == "start" ? AnalyticalCurveSelector.StartPoint : AnalyticalCurveSelector.EndPoint));
+            bc =
+#if REVIT2027
+                BoundaryConditions.CreatePointBoundaryConditions(doc, r,
+#else
+                doc.Create.NewPointBoundaryConditions(r,
+#endif
+                Dof(p, "x", fixedT[0], user), 0, Dof(p, "y", fixedT[1], user), 0, Dof(p, "z", fixedT[2], user), 0,
+                Dof(p, "rx", fixedR, user), 0, Dof(p, "ry", fixedR, user), 0, Dof(p, "rz", fixedR, user), 0);
+        }
+        else if (kind == "line")
+        {
+            if (!(host is AnalyticalMember m)) throw new ArgumentException("A line support goes along an analytical member: 'host' must be one.");
+            if (Has(p, "ry") || Has(p, "rz")) throw new ArgumentException("A line support has x, y, z and rx only.");
+            r = m.GetReference(new AnalyticalModelSelector(m.GetCurve(), AnalyticalCurveSelector.WholeCurve));
+            bc =
+#if REVIT2027
+                BoundaryConditions.CreateLineBoundaryConditions(doc, r,
+#else
+                doc.Create.NewLineBoundaryConditions(r,
+#endif
+                Dof(p, "x", fixedT[0], user), 0, Dof(p, "y", fixedT[1], user), 0, Dof(p, "z", fixedT[2], user), 0, Dof(p, "rx", fixedR, user), 0);
+        }
+        else
+        {
+            if (!(host is AnalyticalPanel)) throw new ArgumentException("An area support goes on an analytical panel: 'host' must be one.");
+            if (keys.Skip(3).Any(k => Has(p, k))) throw new ArgumentException("An area support has x, y and z only.");
+            bc =
+#if REVIT2027
+                BoundaryConditions.CreateAreaBoundaryConditions(doc, host.Id, new List<CurveLoop> { ((AnalyticalPanel)host).GetOuterContour() },
+#else
+                doc.Create.NewAreaBoundaryConditions(host,
+#endif
+                Dof(p, "x", fixedT[0], user), 0, Dof(p, "y", fixedT[1], user), 0, Dof(p, "z", fixedT[2], user), 0);
+        }
+        if (bc == null) throw new InvalidOperationException("Revit did not create the boundary condition.");
+        doc.Regenerate();
+        return new { id = bc.Id.Value, kind, condition = cond, host = host.Id.Value, end = Str(p, "end") };
     }
 
     /// <summary>AnalyticalStructuralRole by a plain word (beam, column, ...), looked up by name so both years compile.</summary>

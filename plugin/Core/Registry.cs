@@ -50,6 +50,14 @@ internal static class Registry
     {
         // model
         Read("ping", ModelRead.Ping);
+        Read("revit_addins", ModelRead.RevitAddins);
+        Read("performance_adviser", SessionRead.PerformanceAdviser);
+        Read("pick", SessionRead.Pick);
+        Read("watch_start", SessionRead.WatchStart);
+        Read("watch_changes", SessionRead.WatchChanges);
+        Read("watch_stop", SessionRead.WatchStop);
+        Read("preview_show", SessionRead.PreviewShow);
+        Read("preview_clear", SessionRead.PreviewClear);
         Read("get_project_info", ModelRead.GetProjectInfo);
         Read("list_levels", ModelRead.ListLevels);
         Read("list_grids", ModelRead.ListGrids);

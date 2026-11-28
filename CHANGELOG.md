@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.30.0 - 2026-11-28
+
+Roadmap phases 15, 16 and 18 closed, and the open items of the 0.26.3 audit fixed. Tested live in scratch projects on
+Revit 2027 and Revit 2024 (nothing saved), Task 04 opened read-only and closed unchanged.
+
+Audit items (0.26.3):
+- Exports are staged: each exporter writes into a hidden folder beside the destination, and the files are then moved in
+  with a move the file system refuses when the destination exists (no replace), unless overwrite: true. If another writer
+  creates a file in between, the files already moved are taken back and everything is kept in a '_revit-mcp-unpublished-...'
+  folder: nothing is half-replaced or lost.
+- Document identity per open: a document_id now also counts how many times the file was opened in this Revit session, so
+  an id handed out before a close and reopen no longer reaches the reopened model (the stable model key used by workbooks
+  is unchanged).
+- model_close: a model with unsaved changes is closed only with discard_changes: true and edit permission (before, the read
+  tool could discard them).
+- Revit's UI queue is bounded (32 waiting requests), runs at most 4 items per idle callback, and on shutdown answers every
+  waiting request (cancelled, nothing changed). Over 16 connections the add-in answers "Revit is busy ... retry" instead of
+  dropping the connection.
+- Input workbooks: file size, expanded size, zip-bomb ratio, rows and cells are checked before and while reading; nothing
+  is sent to Revit when a budget is exceeded.
+- build_package.bat builds into dist\_staging, starts the new exe against a fake Revit (handshake, version, ping,
+  validation, clean exit at end of input) and only then replaces dist\ (moving the previous build aside and back on
+  failure). A prebuilt add-in DLL is used only with a manifest of this version and its SHA-256.
+- The audit log is shared safely by several Revit processes (named lock), and its health (failed writes, last error) is
+  reported in get_edit_permission and on any edit whose entry could not be written (auditLogged).
+- The frozen server exe no longer prints "ValueError: I/O operation on closed file" when its client closes.
+- install.bat /no_pause for scripted installs.
+
+New:
+- revit_addins (read): the add-ins Revit has loaded (names, files, versions), optional exporters, the structural analysis
+  and steel connection add-ins by name, and the analytical members, panels, supports, load cases and steel connection
+  types in the active model.
+- analytical_release_set and boundary_condition_create: end releases (fixed, pinned, bending moment, or user directions)
+  and supports (point at a member end, line along a member, area on a panel; fixed, pinned, roller or user directions) as
+  the engineer gives them. analytical_model now lists each support with its host and direction states.
+- hvac_zone_create on Revit 2027: a space-based system zone (GenericZone) of a system zone type; create_type makes the
+  type, its set points left for the engineer.
+- Schedules: schedule_set takes cell styles per field (bold, italic, underline, colours, font, size), split (parts or
+  heights) and unsplit; schedule_key_create (key schedules with keys and values) and schedule_key_assign. Calculated fields
+  (formula or percentage) are refused with the reason: Revit's API cannot make them.
+- family_parameters: inside loadable families of any category, add parameters, rename, add types, set formulas, set type
+  values (in request units), remove parameters, and load them back with these values; a value sent to a formula-driven
+  parameter is refused.
+- Phase 15: parts_create / parts_divide (lines on a level, grids, levels, reference planes) / parts_merge; array_create
+  (linear or radial, grouped or plain copies); reference_plane_create; align_lock (Align's padlock to a grid or reference
+  plane, optionally moving the element onto it first); performance_adviser (Revit's Performance Adviser rules and their
+  findings); pick (the user picks an element, elements or a point while Claude waits; Esc cancels); watch_start /
+  watch_changes / watch_stop (what is added, changed and deleted, by anyone); preview_show / preview_clear (temporary lines
+  and boxes drawn in the views, never in the model).
+- Phase 16: color_fill_scheme_set (copy or pick a scheme, colour by a parameter, colours and captions per value, apply to
+  views, legend); dimension_rotated and dimension_elements take a dimension type (an Ordinate type gives ordinate
+  dimensions); sheet_collection_set and export_step (Revit 2027); acc_parameter_add (a parameter from the Autodesk
+  parameters service by its id).
+- Category aliases spaces, mep_spaces and areas.
+- Fixed: link_reload of a CAD link (it needs a transaction of its own); export_gbxml now works on Revit 2024 and 2027 (ground
+  plane and export category set; building elements first, then rooms / spaces); export_dgn falls back to a seed file
+  installed with Revit (when there is none, a DGN setup or 'seed' is still needed); array_create reports only the copies.
+
 ## 0.29.0 - 2026-11-28
 
 Roadmap phase 18 (MEP and HVAC) completed: sleeves, plumbing and fire fighting, electrical, cable trays and conduits,

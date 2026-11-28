@@ -45,10 +45,25 @@ internal static class FamilyRead
             return new
             {
                 family = fam.Name, category = fam.FamilyCategory?.Name, types = fm.Types.Size,
+                placement = fam.FamilyPlacementType.ToString(), hosting = Hosting(fdoc.OwnerFamily),
                 parameters = pars, forms, nestedFamilies = nested.GroupBy(x => x).Select(g => new { family = g.Key, count = g.Count() }).ToList(),
                 elementClasses = classes,
             };
         }
         finally { try { fdoc?.Close(false); } catch { } }
+    }
+
+    /// <summary>The family's own placement settings (Family Category and Parameters dialog).</summary>
+    private static object Hosting(Family owner)
+    {
+        if (owner == null) return null;
+        string Flag(BuiltInParameter b) { var pr = owner.get_Parameter(b); return pr == null || !pr.HasValue ? null : pr.AsInteger() != 0 ? "yes" : "no"; }
+        var h = owner.get_Parameter(BuiltInParameter.FAMILY_HOSTING_BEHAVIOR);
+        string host = h == null || !h.HasValue ? null : h.AsValueString() ?? h.AsInteger().ToString(CultureInfo.InvariantCulture);
+        return new
+        {
+            host, workPlaneBased = Flag(BuiltInParameter.FAMILY_WORK_PLANE_BASED), alwaysVertical = Flag(BuiltInParameter.FAMILY_ALWAYS_VERTICAL),
+            cutWithVoidsWhenLoaded = Flag(BuiltInParameter.FAMILY_ALLOW_CUT_WITH_VOIDS),
+        };
     }
 }

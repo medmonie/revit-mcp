@@ -8,11 +8,22 @@
    (all its settings files, 6.x included) and to Codex. Your other servers and your own `revit` settings are kept; each
    settings file is backed up first.
 3. Start Claude Desktop, start Revit, choose **Always Load** when asked, open a model and ask
-   *"Ping Revit and tell me which model is open."* (it shows 0.30.0).
+   *"Ping Revit and tell me which model is open."* (it shows 0.30.1).
 
 ChatGPT desktop shares the Codex settings (`~/.codex/config.toml`), so it gets the `revit` server from the same install
 (tool timeout 3600 s, startup 30 s). Uninstall: `uninstall.bat` from the same zip.
 Full guide: [README](https://github.com/medmonie/revit-mcp#readme).
+
+## New in 0.30.1
+
+Roadmap phases 5, 6, 8, 9 and 13 closed, each re-tested live on Revit 2024 and 2027.
+
+**Opening families at crossings:** `sleeve_place` now takes wall-hosted opening families (placed in the crossed wall)
+and face-based ones (placed on the wall's face, square to it). Their voids cut the wall, and the result reports the
+volume taken out. `family_inspect` shows how a family is hosted (host, work-plane-based, always vertical, cut with voids).
+
+**Closed phases:** shared parameters added and removed for real; coordination and links, modify / documentation depth
+and standards / data suites re-run on 0.30 on both releases; radial dimensions confirmed on Revit 2027.
 
 ## New in 0.30.0 (80 read actions, 171 edit operations)
 

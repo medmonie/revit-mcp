@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.30.1 - 2026-11-28
+
+Roadmap phases 5, 6, 8, 9 and 13 closed. Tested live in one session per release (tests/live_close_chain.py) on Revit
+2024 and 2027: scratch projects for real edits (nothing saved), Task 04 opened by the bridge for dry runs and closed unchanged.
+
+- sleeve_place takes opening families: a wall-hosted family goes in the crossed wall of this model; a work-plane-based
+  family with axis z through a wall (face-based openings) goes on the wall's face, square to it, instead of being tilted off
+  a level (which Revit refuses). Its voids cut the wall; the result says whether they did and how much volume the wall lost
+  (cut, wallVolumeRemoved). Tested with a face-based Wall Opening family: 500 x 400 x wall thickness at a 400 x 300 duct,
+  0.061 m3 out of the wall, on both releases.
+- family_inspect reports the family's placement and hosting: host (wall, floor, face ...), work-plane-based, always
+  vertical, cut with voids when loaded.
+- Phase 5: shared parameters added (text instance, length type) and removed for real (before, only dry runs).
+- Phases 6, 8 and 9 (live_p6, live_p89) re-run on 0.30 on both releases; dimension_radial confirmed on Revit 2027 (refused on 2024).
+- ACC parameters service closed without a live add: no ACC parameter is available to test with (refusals tested in 0.30.0).
+
 ## 0.30.0 - 2026-11-28
 
 Roadmap phases 15, 16 and 18 closed, and the open items of the 0.26.3 audit fixed. Tested live in scratch projects on

@@ -116,7 +116,10 @@ if MODE == "task04":
     edit("link_set nothing given (refused)", [{"op": "link_set", "link": "anything"}], True, expect_error=True)
 
 elif MODE == "scratch":
-    if info.get("path") or info.get("title", "").startswith("Revit Task 04") or "KTR15" in info.get("title", ""):
+    _path = info.get("path") or ""
+    _claude_scratch = "\\RevitMcpScratch\\" in _path and any(d.get("active") and d.get("openedByClaude")
+                                                          for d in bridge_client.call("list_documents", connection=connection).get("documents", []))
+    if (_path and not _claude_scratch) or info.get("title", "").startswith("Revit Task 04") or "KTR15" in info.get("title", ""):
         raise SystemExit("scratch mode: the active model has been saved (or is Task 04 / KTR15); nothing edited.")
     ensure_permission()
     edit("revit_link Task 04 (dry run)", [{"op": "revit_link", "path": TASK04, "placement": "origin", "pin": False}], True)

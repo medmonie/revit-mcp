@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 
-BRIDGE_VERSION = "0.30.0"   # keep plugin/BridgeInfo.cs in step; the tests check it
+BRIDGE_VERSION = "0.30.1"   # keep plugin/BridgeInfo.cs in step; the tests check it
 
 Entry = tuple[str, dict[str, str]]
 Group = dict[str, Entry]
@@ -330,7 +330,8 @@ READ_GROUPS: dict[str, Group] = {
         "preview_clear": ("Remove previews.", {"preview?": "one preview id; default all"}),
     },
     "Meta": {
-        "family_inspect": ("Look inside a loaded family (opened in memory, never saved): its parameters (instance / type, formula), solids with "
+        "family_inspect": ("Look inside a loaded family (opened in memory, never saved): its placement and hosting (host, work-plane-based, "
+                           "always vertical, cut with voids when loaded), parameters (instance / type, formula), solids with "
                            "their material and the parameter it is linked to, nested families.", {"family": "family name"}),
         "describe_api": ("Developer aid: public members of a Revit API type as loaded in this Revit.",
                          {"type_name": "e.g. Autodesk.Revit.DB.Wall, or a short name", "contains?": "member name filter", "limit?": "default 300"}),
@@ -975,7 +976,10 @@ EDIT_GROUPS: dict[str, Group] = {
                          "values given; a value can be a length measured at the crossing: crossing_length, run_outside_diameter, run_diameter, "
                          "run_width or run_height, optionally + or - the engineer's clearance (e.g. \"run_outside_diameter + 50\"). The run is "
                          "not cut (crossing_opening cuts openings; mep_crossings finds the crossings).",
-                         {"type": TYPE + " (generic model, pipe / duct accessory or fitting, specialty or mechanical equipment; level- or work-plane-based)",
+                         {"type": TYPE + " (generic model, pipe / duct accessory or fitting, specialty or mechanical equipment; level- or work-plane-based; "
+                                         "or a wall-hosted opening family (generic model, window or door), placed in the crossed wall of this model; "
+                                         "a work-plane-based family with axis z through a wall of this model goes on the wall's face, square to it; "
+                                         "a hosted or face-placed family's voids cut the wall)",
                           "items": "list of {run: duct / pipe / tray / conduit id, crossing: wall / floor / beam id}",
                           "crossing_link?": "the link holding the crossed elements", "axis?": "x | y | z (default): the family's own axis along its length",
                           "set?": "{parameter: value or measured length}, e.g. {\"Diameter\": \"run_outside_diameter + 50\", \"Length\": \"crossing_length\"}"}),

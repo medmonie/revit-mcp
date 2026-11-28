@@ -59,7 +59,7 @@ the package includes the MCP server as one exe, so no Python, no .NET SDK and no
 3. Start Claude Desktop again.
 4. Start Revit. The first time it asks whether to load the unsigned add-in: choose **Always Load**. A panel
    **Claude MCP** appears on the **Add-Ins** tab.
-5. Open a model and ask: *"Ping Revit and tell me which model is open."* The answer shows the add-in version (0.30.0),
+5. Open a model and ask: *"Ping Revit and tell me which model is open."* The answer shows the add-in version (0.30.1),
    the Revit version, and the active model's `documentId`.
 
 **ChatGPT desktop app.** It shares Codex's settings file (`~/.codex/config.toml`), so the `revit` entry that

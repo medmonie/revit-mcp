@@ -1,5 +1,15 @@
 # Revit MCP implementation log
 
+## 2026-11-28 · Version 0.30.1 (phases 5, 6, 8, 9 and 13 closed)
+
+| Item | Change | Test |
+|---|---|---|
+| Opening families | sleeve_place: wall-hosted families in the crossed wall; work-plane-based (face-based) families with axis z on the wall's face; void cut measured from the wall volume (cut, wallVolumeRemoved); refused for a wall in a link when hosted | live_v030d on 2024 and 2027 with Wall Opening.rfa (face-based, cut with voids when loaded): placed on the face, 0.061 m3 removed |
+| family_inspect | placement and hosting (host, work-plane-based, always vertical, cut with voids when loaded) | live_v030d |
+| Phase 5 | shared parameters added and removed for real | live_v030d on both releases |
+| Phases 6, 8, 9 | live_p6 / live_p89 scratch guard accepts a model_new scratch; DGN and gbXML left to live_v030b; dimension_radial expected to work on 2027 | live_close_chain on both releases: all parts passed |
+| ACC parameters | closed without a live add (no ACC parameter available) | refusals from 0.30.0 |
+
 ## 2026-11-28 · Version 0.30.0 (phases 15, 16 and 18 closed; 0.26.3 audit items fixed)
 
 Mohamed asked to finish phases 15, 16 and 18 with the items listed, create analytical items (no model had any) and make

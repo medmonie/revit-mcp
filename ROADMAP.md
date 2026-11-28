@@ -1,7 +1,7 @@
 # Roadmap
 
 Planned and finished work for the Revit MCP bridge, by phase. S = one build batch, M = one or two batches with a live
-test, L = several batches. Status as of version 0.30.0 (28 November 2026).
+test, L = several batches. Status as of version 0.30.1 (28 November 2026).
 
 | Status | Meaning |
 |---|---|
@@ -19,7 +19,7 @@ The whole Revit API (2024 and 2027: 2,713 public types) is mapped against the br
 36 built, 20 partly built, 22 planned or not built. Its Build plan tab gives each gap a phase and a priority
 (P1 first). Agreed build order:
 
-1. Phase 6 (P1): coordinates read, link management, annotation values, clash check against a linked Revit / IFC model. Built in 0.18.0.
+1. Phase 6 (P1): coordinates read, link management, annotation values, clash check against a linked Revit / IFC model. Built in 0.18.0, done (tested on both releases) in 0.30.1.
 2. Phase 7 (P1 / P2): path and fabric reinforcement, then couplers, hooks, rebar tags, numbering, 2027 splices.
 3. Phase 7 (rest): sloped / curved members, 2027 cranks. Phase 15 (P1): ray casting (what is above / below, clearances); Phase 16 (P1): open / close models, batch reads.
 4. Phases 10, 11, 12, 13, 14 by their P2 items, then the P3 items.
@@ -67,27 +67,27 @@ The whole Revit API (2024 and 2027: 2,713 public types) is mapped against the br
 | Beam systems | M | Done |
 | Braces | S | Done |
 
-## Phase 5 - Model management (built)
+## Phase 5 - Model management (done)
 
 | Feature | Effort | Status |
 |---|---|---|
 | Model health report (`model_health`) | S | Done |
-| Project and shared parameters: list, add from a shared parameter file, remove | M | Done (add / remove tested as dry runs) |
+| Project and shared parameters: list, add from a shared parameter file, remove | M | Done (0.30.1: real add and remove tested in a scratch, Revit 2024 and 2027) |
 | Purge unused (preview, then per-element purge) | S | Done |
 | Copy standards from another open model (templates, filters, types, patterns, materials, title blocks, line styles) | M | Done (tested 0.23.1 from Task 02) |
 | Worksets: list, ownership, create, move elements | S | Done (tested 0.22.2 on a detached workshared copy) |
 | Phases and design options: read; phase created / demolished | S | Done |
 | Create non-shared project parameters; move elements into a design option | - | Not possible (no API) |
 
-## Phase 6 - Coordination and links (built)
+## Phase 6 - Coordination and links (done)
 
 | Feature | Read / edit | Priority | Effort | Status |
 |---|---|---|---|---|
-| Read elements inside linked Revit models (with the link transform) | Read | High | M | Built (0.16.0) |
-| Clash check against a linked Revit or IFC model | Read | High | L | Built (0.18.0, hard clashes; IFC links are linked by Revit Insert > Link IFC) |
-| Link management: reload, unload, change path, pin | Edit | High | S | Built (0.18.0) |
-| Project base point, survey point, shared coordinates: read | Read | High | S | Built (0.18.0) |
-| Annotation values: dimension values, tag text, for drawing QA | Read | High | S | Built (0.18.0) |
+| Read elements inside linked Revit models (with the link transform) | Read | High | M | Done (0.16.0) |
+| Clash check against a linked Revit or IFC model | Read | High | L | Done (0.18.0, hard clashes; IFC links are linked by Revit Insert > Link IFC) |
+| Link management: reload, unload, change path, pin | Edit | High | S | Done (0.18.0) |
+| Project base point, survey point, shared coordinates: read | Read | High | S | Done (0.18.0) |
+| Annotation values: dimension values, tag text, for drawing QA | Read | High | S | Done (0.18.0) |
 
 ## Phase 7 - Reinforcement completion (in progress)
 
@@ -102,28 +102,28 @@ The whole Revit API (2024 and 2027: 2,713 public types) is mapped against the br
 | Path reinforcement, couplers, rebar containers in rebar_list | Read | Medium | S | Built (0.19.0 / 0.20.0) |
 | Revit 2027: splices by rules, cranks, numbering schemas | Edit | Medium | M | Splices built (0.20.0); numbering read and renumber built for both versions; cranks and 2027 numbering-schema creation planned |
 
-## Phase 8 - Modify and documentation depth (built)
+## Phase 8 - Modify and documentation depth (done)
 
 | Feature | Read / edit | Priority | Effort | Status |
 |---|---|---|---|---|
-| Flip facing and hand | Edit | Medium | S | Built (0.17.0) |
-| Wall and beam end joins (allow / disallow, extensions) | Edit | Medium | M | Built (0.17.0) |
-| Face-based and work-plane-based families | Edit | Medium | M | Built (0.17.0) |
-| Groups and assemblies: read, create, assembly views | Read + Edit | Medium | L | Built (0.17.0) |
-| Schedules: filters, sorting, grouping, formatting | Edit | Medium | M | Built (0.17.0) |
-| Dimensions: rotated, angular, radial | Edit | Medium | L | Built (0.17.0); radial needs Revit 2027 |
-| Spot coordinates | Edit | Low | S | Built (0.17.0) |
+| Flip facing and hand | Edit | Medium | S | Done (0.17.0) |
+| Wall and beam end joins (allow / disallow, extensions) | Edit | Medium | M | Done (0.17.0) |
+| Face-based and work-plane-based families | Edit | Medium | M | Done (0.17.0) |
+| Groups and assemblies: read, create, assembly views | Read + Edit | Medium | L | Done (0.17.0) |
+| Schedules: filters, sorting, grouping, formatting | Edit | Medium | M | Done (0.17.0) |
+| Dimensions: rotated, angular, radial | Edit | Medium | L | Done (0.17.0); radial needs Revit 2027 (tested 0.30.1) |
+| Spot coordinates | Edit | Low | S | Done (0.17.0) |
 | Spot slopes | Edit | Low | - | Not possible (no API) |
-| fix_warnings: more warning types with one safe fix | Edit | Medium | M | Built (0.17.0) |
-| Raw element geometry (faces, edges, solids) read | Read | Low | S | Built (0.17.0) |
+| fix_warnings: more warning types with one safe fix | Edit | Medium | M | Done (0.17.0) |
+| Raw element geometry (faces, edges, solids) read | Read | Low | S | Done (0.17.0) |
 
-## Phase 9 - Standards and data (built)
+## Phase 9 - Standards and data (done)
 
 | Feature | Read / edit | Priority | Effort | Status |
 |---|---|---|---|---|
-| Global parameters: read, create, set | Read + Edit | Medium | S | Built (0.17.0) |
-| Material assets (structural, thermal, appearance): read, set | Read + Edit | Medium | M | Built (0.17.0) |
-| Keynotes and assembly codes: read | Read | Low | S | Built (0.17.0) |
+| Global parameters: read, create, set | Read + Edit | Medium | S | Done (0.17.0) |
+| Material assets (structural, thermal, appearance): read, set | Read + Edit | Medium | M | Done (0.17.0) |
+| Keynotes and assembly codes: read | Read | Low | S | Done (0.17.0) |
 | Export DWF, FBX, gbXML, DGN | Edit | Low | S | Done (0.17.0 DWF and FBX; 0.30.0 staged publishing, DGN falls back to a seed file installed with Revit, gbXML tries building elements then rooms / spaces). DGN needs a DGN setup or seed file when none is installed (none on the test PC); gbXML needs a model Revit can build an energy model from |
 
 ## Phase 10 - Analytical model and loads (done)
@@ -155,16 +155,16 @@ The whole Revit API (2024 and 2027: 2,713 public types) is mapped against the br
 | Relinquish all or chosen elements; check out elements before an edit | Edit | Medium | S | Done (0.23.1; relinquish by kind, not by element) |
 | Separate confirmation for every sync: no dry run exists, so it never runs inside an edit batch | Edit | Medium | S | Done (own actions; sync and relinquish need confirm: true) |
 
-## Phase 13 - MEP (partly done; the rest moves to phase 18)
+## Phase 13 - MEP (done; its last rows were finished in phase 18)
 
 | Feature | Read / edit | Priority | Effort | Status |
 |---|---|---|---|---|
-| Read MEP systems, connectors, sizes, flow direction | Read | Medium | M | Done (0.21.0, mep_systems; connectors / flow not yet) |
+| Read MEP systems, connectors, sizes, flow direction | Read | Medium | M | Done (0.21.0 mep_systems; 0.27.0 mep_connectors with flow direction) |
 | MEP quantities: duct, pipe, tray, conduit lengths by size; fittings and equipment counts | Read | Medium | M | Done (0.21.0, mep_quantities) |
-| MEP crossings through beams, walls and slabs, feeding opening_create (sleeves, openings) | Read + Edit | Medium | M | Done (0.21.0 mep_crossings; 0.22.0 crossing_opening in host structure; sleeve families not yet) |
-| Ducts, pipes, cable trays, conduits between points with given types and sizes | Edit | Low | L | Built (0.22.0, straight runs, no fittings) |
-| Place MEP equipment and fixtures and connect them to systems | Edit | Low | M | Planned |
-| Create systems and assign elements | Edit | Low | L | Planned |
+| MEP crossings through beams, walls and slabs, feeding opening_create (sleeves, openings) | Read + Edit | Medium | M | Done (0.21.0 mep_crossings; 0.22.0 crossing_opening; 0.29.0 sleeve_place; 0.30.1 opening families: wall-hosted, or face-based on the wall face, cutting the wall; tested with a face-based Wall Opening family) |
+| Ducts, pipes, cable trays, conduits between points with given types and sizes | Edit | Low | L | Done (0.22.0 straight runs; 0.25.0 to 0.29.0 mep_route with fittings) |
+| Place MEP equipment and fixtures and connect them to systems | Edit | Low | M | Done in phase 18 (0.27.0 / 0.29.0) |
+| Create systems and assign elements | Edit | Low | L | Done in phase 18 (0.25.0 mep_system_create / add / remove) |
 
 ## Phase 14 - Steel connections (planned)
 
@@ -193,7 +193,7 @@ The whole Revit API (2024 and 2027: 2,713 public types) is mapped against the br
 | Schedule depth: calculated fields, key schedules, cell styles, split schedules | Edit | P2 | M | Done 0.30 (schedule_key_create / schedule_key_assign; schedule_set style, split, unsplit). Calculated fields (formula or percentage): Not possible, Revit's API cannot make them (refused with the reason) |
 | Family type parameters and formulas in loaded families (no geometry) | Edit | P3 | M | Done 0.30 (family_parameters: add, rename, types, formulas, values, remove; loaded back with the family's values) |
 | Colour fill schemes; arc-length and ordinate dimensions; sheet collections and STEP export (2027) | Edit | P3 | M | Done 0.30 (color_fill_scheme_set with legend; ordinate dimensions through a dimension 'type'; sheet_collection_set and export_step on 2027). Arc-length dimensions: Not possible in projects (the API makes them in families only) |
-| Autodesk (ACC) parameters service | Edit | P3 | M | Built 0.30 (acc_parameter_add by the service's parameter id; refusals tested; needs a parameter id from Mohamed's ACC account for a live add) |
+| Autodesk (ACC) parameters service | Edit | P3 | M | Closed 0.30 (acc_parameter_add by the service's parameter id; refusals tested; closed without a live add: no ACC parameter is available to test with) |
 
 ## Phase 17 - Architecture (proposed; for the architecture department; takes over the rest of phase 11)
 
@@ -245,7 +245,5 @@ equipment capacity, sizes, flow rates, lighting levels, circuit loads) come from
 
 ## Open checks
 
-- Phases 8 and 9 tested live in Revit 2024 only (Task 04 dry runs, real runs in a scratch project); run them in 2027,
-  including dimension_radial (2027 only).
-- export_dgn with a DGN setup or seed file; export_gbxml with an energy analysis model set up in Revit.
-
+- export_dgn with a DGN setup or seed file (none is installed on the test PC); export_gbxml is tested on a model with
+  floors and a roof (live_v030b), not on any model.

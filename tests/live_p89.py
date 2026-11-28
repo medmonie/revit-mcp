@@ -22,6 +22,7 @@ FAILED = []
 
 # Bind the initial model check and every subsequent read/edit to one document.
 connection = bridge_client.pin()
+REVIT_YEAR = str(bridge_client.call("ping", connection=connection).get("revitVersion"))
 info = bridge_client.call("get_project_info", connection=connection)
 document_id = info.get("documentId")
 if not document_id:
@@ -174,7 +175,9 @@ if MODE == "task04":
         if horiz and vert:
             edit(f"dimension_angular {horiz} / {vert}", [{"op": "dimension_angular", "view": plan, "between": [horiz, vert]}], DRY)
             edit("dimension_angular parallel (refused)", [{"op": "dimension_angular", "view": plan, "between": [vert, vert]}], DRY, expect_error=True)
-        edit("dimension_radial on 2024 (refused)", [{"op": "dimension_radial", "view": plan, "ids": [2225279]}], DRY, expect_error=True)
+        # Revit 2024 cannot dimension this element's radius (refused); Revit 2027 can (dry run)
+        edit(f"dimension_radial on {REVIT_YEAR}" + (" (refused)" if REVIT_YEAR == "2024" else ""),
+             [{"op": "dimension_radial", "view": plan, "ids": [2225279]}], DRY, expect_error=REVIT_YEAR == "2024")
         edit("spot_coordinate slab", [{"op": "spot_coordinate", "view": plan, "ids": [1739650]}], DRY)
         edit("spot_elevation slab (regression, shared face point)", [{"op": "spot_elevation", "view": plan, "ids": [1739650]}], DRY)
     edit("fix_warnings all kinds (dry run)", [{"op": "fix_warnings", "kinds": ["joined_disjoint", "duplicate_instances", "overlapping_lines"]}], DRY)
@@ -210,7 +213,10 @@ if MODE == "task04":
     edit("export_fbx on a plan (refused)", [{"op": "export_fbx", "folder": EXPORT_DIR, "view": plan}], DRY, expect_error=True)
 
 elif MODE == "scratch":
-    if info.get("path") or info.get("title", "").startswith("Revit Task 04") or "KTR15" in info.get("title", ""):
+    _path = info.get("path") or ""
+    _claude_scratch = "\\RevitMcpScratch\\" in _path and any(d.get("active") and d.get("openedByClaude")
+                                                          for d in bridge_client.call("list_documents", connection=connection).get("documents", []))
+    if (_path and not _claude_scratch) or info.get("title", "").startswith("Revit Task 04") or "KTR15" in info.get("title", ""):
         raise SystemExit("scratch mode: the active model has been saved (or is Task 04 / KTR15); nothing edited.")
     DRY = False
     levels = (read("levels", "list_levels", {}) or {}).get("levels", [])
@@ -287,9 +293,9 @@ elif MODE == "scratch":
     plans = (read("plans", "list_views", {"type": "FloorPlan", "limit": 5}) or {}).get("views", [])
     plan = plans[0]["name"] if plans else None
     exp = [{"op": "export_dwf", "folder": EXPORT_DIR, "views": [plan], "overwrite": True},
-           {"op": "export_dgn", "folder": EXPORT_DIR, "views": [plan], "overwrite": True},
-           {"op": "export_fbx", "folder": EXPORT_DIR, "view": "MCP Test 3D", "name": "scratch_3d", "overwrite": True},
-           {"op": "export_gbxml", "folder": EXPORT_DIR, "name": "scratch_energy", "overwrite": True}]
+           # DGN is left out: it needs a DGN setup or seed file, and none is installed with Revit on the test PC (see live_v030b)
+           {"op": "export_fbx", "folder": EXPORT_DIR, "view": "MCP Test 3D", "name": "scratch_3d", "overwrite": True}]
+    # gbXML is left out here: this scratch has no floors / roof for an energy model; live_v030b builds one and exports it
     edit("exports (real, scratch project)", exp, DRY)
     try:
         print("===== files in export folder\n" + "\n".join(f"{p.name}  {p.stat().st_size} bytes" for p in sorted(Path(EXPORT_DIR).iterdir())), flush=True)

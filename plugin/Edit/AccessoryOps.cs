@@ -464,11 +464,15 @@ internal static class AccessoryOps
         var doc = c.Doc;
         var symbol = (FamilySymbol)Find.TypeOf(doc, NeedStr(p, "type"), null, typeof(FamilySymbol));
         var cat = symbol.Category?.BuiltInCategory;
-        if (cat == null || !SleeveCats.Contains(cat.Value))
-            throw new ArgumentException($"'{Find.TypeLabel(symbol)}' is a {symbol.Category?.Name}; sleeve_place takes generic models, pipe / duct accessories or fittings, specialty or mechanical equipment.");
         var placement = symbol.Family.FamilyPlacementType;
-        if (placement != FamilyPlacementType.OneLevelBased && placement != FamilyPlacementType.WorkPlaneBased)
-            throw new ArgumentException($"'{Find.TypeLabel(symbol)}' is a {placement} family; sleeve_place places level-based or work-plane-based families (not hosted on a face).");
+        bool hosted = placement == FamilyPlacementType.OneLevelBasedHosted;   // wall-hosted, e.g. an opening family
+        bool catOk = cat != null && (SleeveCats.Contains(cat.Value) || (hosted && (cat == BuiltInCategory.OST_Windows || cat == BuiltInCategory.OST_Doors)));
+        if (!catOk)
+            throw new ArgumentException($"'{Find.TypeLabel(symbol)}' is a {symbol.Category?.Name}; sleeve_place takes generic models, pipe / duct accessories or fittings, specialty or mechanical equipment (and wall-hosted openings as generic models, windows or doors).");
+        if (!hosted && placement != FamilyPlacementType.OneLevelBased && placement != FamilyPlacementType.WorkPlaneBased)
+            throw new ArgumentException($"'{Find.TypeLabel(symbol)}' is a {placement} family; sleeve_place places level-based, work-plane-based or wall-hosted families.");
+        if (hosted && Has(p, "crossing_link"))
+            throw new ArgumentException($"'{Find.TypeLabel(symbol)}' is wall-hosted: it can only go on a wall of this model, not on one in a link.");
         if (!symbol.IsActive) { symbol.Activate(); doc.Regenerate(); }
         string axisName = Choice(p, "axis", "z", "x", "y", "z");
         var values = Has(p, "set") ? (p["set"] as Obj ?? throw new ArgumentException("'set' must be an object of parameter name: value.")) : new Obj();
@@ -492,7 +496,30 @@ internal static class AccessoryOps
             var dir = RunLine(piece).Direction.Normalize();
             var level = doc.GetElement(piece.ReferenceLevel?.Id ?? piece.LevelId) as Level
                         ?? throw new ArgumentException($"{what}: run {piece.Id.Value} has no reference level.");
-            var fi = doc.Create.NewFamilyInstance(spot.At, symbol, level, RStruct.StructuralType.NonStructural);
+            FamilyInstance fi;
+            Wall hostWall = linkName == null ? doc.GetElement(NeedId(it, "crossing")) as Wall : null;
+            double WallVol() => hostWall?.get_Parameter(BuiltInParameter.HOST_VOLUME_COMPUTED)?.AsDouble() ?? 0;
+            double volBefore = WallVol();
+            // a work-plane-based family whose length (z) has to lie along a horizontal run through a wall of this model goes on
+            // the wall's face (its z along the wall normal) rather than being tilted off a level (Revit refuses that tilt for
+            // families kept vertical, e.g. opening families)
+            bool onFace = !hosted && placement == FamilyPlacementType.WorkPlaneBased && axisName == "z" && hostWall != null && Math.Abs(dir.Z) < 0.99;
+            if (hosted)
+            {
+                if (hostWall == null) throw new ArgumentException($"{what}: '{Find.TypeLabel(symbol)}' is wall-hosted, so the crossing must be a wall of this model.");
+                c.Editable(hostWall);
+                fi = doc.Create.NewFamilyInstance(spot.At, symbol, hostWall, level, RStruct.StructuralType.NonStructural);
+            }
+            else if (onFace)
+            {
+                var faceRef = FaceFacing(hostWall, dir) ?? throw new ArgumentException($"{what}: wall {hostWall.Id.Value} has no flat side face to place '{Find.TypeLabel(symbol)}' on.");
+                var face = (PlanarFace)hostWall.GetGeometryObjectFromReference(faceRef);
+                var n = face.FaceNormal;
+                var onPlane = spot.At - n * n.DotProduct(spot.At - face.Origin);
+                var along = ((LocationCurve)hostWall.Location).Curve is Line wl ? wl.Direction.Normalize() : n.CrossProduct(XYZ.BasisZ).Normalize();
+                fi = doc.Create.NewFamilyInstance(faceRef, onPlane, along, symbol);
+            }
+            else fi = doc.Create.NewFamilyInstance(spot.At, symbol, level, RStruct.StructuralType.NonStructural);
             doc.Regenerate();
             // sizes first (they change the box the sleeve is centred by)
             var set = new Obj();
@@ -503,11 +530,13 @@ internal static class AccessoryOps
                 set[kv.Key] = v;
             }
             doc.Regenerate();
+            double ang = 0;
+            if (hosted || onFace) goto centre;   // a hosted or face-placed family follows its wall
             // turn the family's own axis onto the run
             var tf = fi.GetTransform();
             var axis = (axisName == "x" ? tf.BasisX : axisName == "y" ? tf.BasisY : tf.BasisZ).Normalize();
             if (axis.DotProduct(dir) < 0) dir = -dir;
-            double ang = Math.Acos(Math.Max(-1, Math.Min(1, axis.DotProduct(dir))));
+            ang = Math.Acos(Math.Max(-1, Math.Min(1, axis.DotProduct(dir))));
             if (ang > 1e-6)
             {
                 var rot = axis.CrossProduct(dir);
@@ -517,17 +546,40 @@ internal static class AccessoryOps
                 ElementTransformUtils.RotateElement(doc, fi.Id, Line.CreateUnbound(spot.At, rot.Normalize()), ang);
                 doc.Regenerate();
             }
-            // centre it on the crossing
+        centre:
+            // centre it on the crossing (a hosted one stays in its wall: only the move along the wall and up / down applies)
             var bb = fi.get_BoundingBox(null);
             if (bb != null)
             {
                 var mid = (bb.Min + bb.Max) / 2;
-                if (!mid.IsAlmostEqualTo(spot.At)) { ElementTransformUtils.MoveElement(doc, fi.Id, spot.At - mid); doc.Regenerate(); }
+                var move = spot.At - mid;
+                if (hosted && hostWall?.Orientation is XYZ wn) move -= wn * wn.DotProduct(move);   // stays in its wall
+                if (!move.IsZeroLength() && move.GetLength() > 1e-6) { ElementTransformUtils.MoveElement(doc, fi.Id, move); doc.Regenerate(); }
+            }
+            // its voids cut the wall it sits in (families whose voids cut on placement or 'Cut with Voids When Loaded')
+            // (face-based and wall-hosted families cut their host by themselves; others get an instance void cut if they can)
+            string cut = null; double removed = 0;
+            if ((hosted || onFace) && hostWall != null)
+            {
+                doc.Regenerate();
+                if (volBefore - WallVol() <= 1e-9)
+                {
+                    try
+                    {
+                        if (!InstanceVoidCutUtils.InstanceVoidCutExists(hostWall, fi) && InstanceVoidCutUtils.CanBeCutWithVoid(hostWall))
+                        { InstanceVoidCutUtils.AddInstanceVoidCut(doc, hostWall, fi); doc.Regenerate(); }
+                    }
+                    catch (Exception ex) { cut = "does not cut the wall (" + ex.Message.Split('\n')[0].Trim() + ")"; }
+                }
+                removed = volBefore - WallVol();
+                cut ??= removed > 1e-9 ? "cuts the wall" : "does not cut the wall (its voids took nothing out)";
             }
             rows.Add(new Obj
             {
                 ["id"] = fi.Id.Value, ["run"] = run.Id.Value, ["piece"] = piece.Id.Value, ["at"] = U.Xyz(spot.At), ["position"] = spot.How,
                 ["crossing"] = spot.Crossing, ["runSize"] = RunSize(piece), ["set"] = set, ["turnedDeg"] = Math.Round(ang * 180 / Math.PI, 2),
+                ["hostedOn"] = hosted ? (long?)fi.Host?.Id.Value : null, ["placedOnFaceOf"] = onFace ? (long?)hostWall.Id.Value : null, ["cut"] = cut,
+                ["wallVolumeRemoved"] = cut == null ? null : (double?)Math.Round(UnitUtils.ConvertFromInternalUnits(removed, UnitTypeId.CubicMeters), 4),
             });
         }
         return new
@@ -536,6 +588,24 @@ internal static class AccessoryOps
             note = "Sleeves of the type given, centred where each run crosses the element, with the values given (measured lengths in request units). "
                  + "Sleeve sizes and clearances are the engineer's; the run is not cut (crossing_opening cuts openings).",
         };
+    }
+
+    /// <summary>The wall's flat side face the run enters through (its normal against the run), else the other side.</summary>
+    private static Reference FaceFacing(Wall wall, XYZ dir)
+    {
+        Reference best = null; double bestDot = double.MaxValue;
+        foreach (var side in new[] { ShellLayerType.Exterior, ShellLayerType.Interior })
+        {
+            IList<Reference> refs;
+            try { refs = HostObjectUtils.GetSideFaces(wall, side); } catch { continue; }
+            foreach (var r in refs)
+                if (wall.GetGeometryObjectFromReference(r) is PlanarFace pf)
+                {
+                    double d = pf.FaceNormal.DotProduct(dir);
+                    if (d < bestDot) { bestDot = d; best = r; }
+                }
+        }
+        return best;
     }
 
     // ---------------------------------------------------------------- insulation and lining

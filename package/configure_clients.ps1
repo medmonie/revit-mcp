@@ -25,6 +25,10 @@ Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'Packages') -Directory -Filter 
     $store = Join-Path $_.FullName 'LocalCache\Roaming\Claude'
     if (Test-Path -LiteralPath $store) { $claudeFiles += (Join-Path $store 'claude_desktop_config.json') }
 }
+# Claude Desktop 6.x reads Claude-Data\claude_<profile>\claude_desktop_config.json.
+Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'Claude-Data') -Directory -Filter 'claude_*' -ErrorAction SilentlyContinue | ForEach-Object {
+    $claudeFiles += (Join-Path $_.FullName 'claude_desktop_config.json')
+}
 
 foreach ($file in $claudeFiles) {
     try {

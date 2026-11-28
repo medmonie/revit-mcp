@@ -49,6 +49,9 @@ def render() -> str:
             ""]
     for title, group in catalog.EDIT_GROUPS.items():
         out += [f"### {title}", "", *_table(group), ""]
+    out += [f"## Worksharing actions ({len(catalog.WORKSHARE_ACTIONS)}) - change the central model", "", catalog.WORKSHARE_NOTE, ""]
+    for title, group in catalog.WORKSHARE_GROUPS.items():
+        out += [*_table(group), ""]
     return "\n".join(out)
 
 

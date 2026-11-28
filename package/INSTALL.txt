@@ -3,24 +3,30 @@ Revit MCP bridge - quick install (Revit 2024 / 2027)
 Needed on this PC: Autodesk Revit 2024 and/or 2027, and an MCP client (Claude Desktop, ChatGPT desktop or Codex).
 Nothing else: the package includes the MCP server as one exe. Python and the .NET SDK are only for building from source.
 
-1. Close Revit.
+1. Close Revit, and quit Claude Desktop completely (tray icon > Quit): while it runs it can write its own copy of
+   its settings over the new entry, and it keeps the server exe in use. install.bat stops while either is open.
 2. Unzip RevitMcp.zip and double-click install.bat as the Windows user who runs Revit (no "Run as administrator":
    it needs no admin rights, and an elevated window running as another account would install into that account's
    profile; install.bat stops when the two differ, install.bat /this_user overrides). It
    - installs the add-in for each Revit it finds (%APPDATA%\Autodesk\Revit\Addins\<year>\),
    - installs the server: %LOCALAPPDATA%\RevitMcpBridge\revit-mcp-server.exe,
-   - adds "revit" to Claude Desktop (claude_desktop_config.json) and Codex (~/.codex/config.toml), keeping your
-     other servers (civil3d ...); the old file is saved next to it as .bak-<date>.
-3. Fully quit Claude Desktop (tray icon > Quit) and start it again.
+   - adds "revit" to Claude Desktop (every claude_desktop_config.json it uses, including the one Claude Desktop 6.x
+     reads in %LOCALAPPDATA%\Claude-Data\claude_*\; also when Claude Desktop was never started) and Codex
+     (~/.codex/config.toml), keeping your other servers (civil3d ...); the old file is saved next to it as
+     .bak-<date>. The window and install_result.txt list each file changed, or why one could not be.
+3. Start Claude Desktop again.
 4. Start Revit. When it asks about loading "Revit MCP bridge", choose Always Load. A Claude MCP panel appears on the
    Add-Ins tab.
 5. Open a model and ask: "Ping Revit and tell me which model is open."
 
-ChatGPT desktop: Settings > MCP servers > Add server. Name it revit, choose STDIO, command = the server path printed by
-install.bat, no arguments. Save and restart as prompted.
+ChatGPT desktop app: it shares the Codex settings (~/.codex/config.toml), so the revit entry install.bat writes there
+serves it too: restart the app and revit appears under Settings > MCP servers. (By hand: Settings > MCP servers > Add
+server, name revit, STDIO, command = the server path printed by install.bat, no arguments; Save, then Restart.)
 If install.bat could not change a client's settings, add this by hand (snippets are saved next to the server):
   Claude Desktop (Settings > Developer > Edit Config), inside "mcpServers":
     "revit": { "command": "C:\\Users\\<you>\\AppData\\Local\\RevitMcpBridge\\revit-mcp-server.exe" }
+  Codex and the ChatGPT desktop app (~/.codex/config.toml): the lines in codex_mcp_config_snippet.toml next to the
+  server (command, startup_timeout_sec = 30, tool_timeout_sec = 3600: long edits outlast the 60 s default).
 
 Permissions
 - Your MCP client asks before it uses the tool. Revit asks once per session, at the first edit.

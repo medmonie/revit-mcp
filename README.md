@@ -1,6 +1,6 @@
 # Revit MCP bridge
 
-**Version 0.17 · Autodesk Revit 2027 and 2024 · Windows**
+**Version 0.29 · Autodesk Revit 2027 and 2024 · Windows**
 
 Lets Claude work in the model that is open in Revit on this computer: read it, measure it, check it, and, after you allow
 it once per Revit session, build and fix it. One tool covers modelling, editing, quantity surveying, model QA, CAD to
@@ -39,7 +39,9 @@ The bridge connection stays on this machine. MCP results are returned to the con
 Needs Revit 2024 and/or 2027 and an MCP client: Claude Desktop, the ChatGPT desktop app, or Codex. **Nothing else**:
 the package includes the MCP server as one exe, so no Python, no .NET SDK and no build.
 
-1. Close Revit.
+1. Close Revit and quit Claude Desktop completely (tray icon > Quit). Claude Desktop can otherwise write its own copy
+   of its settings over the new entry, and it keeps the server exe in use; `install.bat` stops while either runs
+   (`install.bat /claude_open` installs anyway).
 2. Download **`RevitMcp.zip`** (from this repository's Releases, or built with `build_package.bat`), unzip it and
    double-click **`install.bat`** as the Windows user who runs Revit. Everything goes into that user's profile, so
    do not use *Run as administrator* (it is not needed): an elevated window running under another account (e.g.
@@ -51,15 +53,20 @@ the package includes the MCP server as one exe, so no Python, no .NET SDK and no
    - installs the server: `%LOCALAPPDATA%\RevitMcpBridge\revit-mcp-server.exe`;
    - **adds `"revit"` to Claude Desktop** (`claude_desktop_config.json`, normal and Microsoft Store installs) **and to
      Codex** (`~/.codex/config.toml`), keeping every other server (`civil3d` ...) and setting. The previous file is
-     saved next to it as `.bak-<date>`.
-3. Fully quit Claude Desktop (tray icon > Quit) and start it again.
+     saved next to it as `.bak-<date>`. The server exe does this itself (`--configure-clients`), so company policies
+     that block PowerShell scripts cannot stop it; it also creates the file when Claude Desktop was never started, and
+     lists every file it changed (or why it could not) in the window and in `install_result.txt`.
+3. Start Claude Desktop again.
 4. Start Revit. The first time it asks whether to load the unsigned add-in: choose **Always Load**. A panel
    **Claude MCP** appears on the **Add-Ins** tab.
-5. Open a model and ask: *"Ping Revit and tell me which model is open."* The answer shows the add-in version (0.17.0),
+5. Open a model and ask: *"Ping Revit and tell me which model is open."* The answer shows the add-in version (0.29.0),
    the Revit version, and the active model's `documentId`.
 
-**ChatGPT desktop app.** Settings > MCP servers > Add server. Name it `revit`, choose STDIO, and use the server path
-printed by `install.bat` as the command, with no arguments.
+**ChatGPT desktop app.** It shares Codex's settings file (`~/.codex/config.toml`), so the `revit` entry that
+`install.bat` writes there serves it too: restart the app and `revit` appears under Settings > MCP servers. By hand:
+Settings > MCP servers > Add server, name `revit`, STDIO, the server path printed by `install.bat` as the command (no
+arguments), Save, Restart. The installer's entry also sets `tool_timeout_sec = 3600`: Codex and ChatGPT stop a tool
+call after 60 s by default, shorter than a long edit or batch read.
 
 If `install.bat` could not change a client's settings, it says so; add this inside `"mcpServers"` by hand (the
 snippets are also saved next to the server):
@@ -118,11 +125,15 @@ You are asked once in each program, and never per edit.
 |---|---|---|
 | Claude | Allow the tool `revit` | Once ("always allow") |
 | Revit | "Allow Claude to edit models in this session?" | Once per Revit session, at the first edit |
+| Revit | "Claude - change the central model?" | Every `sync_with_central` and every `relinquish` |
 
 - **Reading never asks anything** in Revit.
 - After **Yes**, no later edit asks again, in any open model, until Revit is closed.
 - After **No**, nothing is changed, and edits are refused for 30 seconds so that a retry cannot nag you.
 - The permission is deliberately not remembered: after every Revit restart the first edit asks again.
+- **Synchronising with central and relinquishing ask every time.** They reach the model other people work in and cannot
+  be undone, so the session permission is not enough: Revit shows its own Yes / No dialog for that one action. The first
+  call returns "not granted"; after **Yes** the same request, sent again within 5 minutes, runs once.
 
 Buttons on **Add-Ins > Claude MCP**:
 
@@ -134,6 +145,11 @@ Buttons on **Add-Ins > Claude MCP**:
 
 > **Read-only from the Claude side.** Set the environment variable `REVIT_MCP_SPLIT=1` for the server: Claude then
 > shows two tools, `revit_read` and `revit_edit`, which you can allow separately.
+
+> **Tool description size.** By default the description Claude receives lists every action and edit operation with its
+> summary and parameters (about 49,000 characters, carried by every conversation). Set `REVIT_MCP_DESCRIPTION=compact`
+> for the server to list names and parameter names only (about 20,000 characters); Claude then asks `help` for what an
+> action does and what its parameters mean.
 
 ---
 
@@ -218,6 +234,12 @@ Each workflow lists what to ask, what runs, and what to check. Run the edit step
 | "List the link's columns on Level 2 with their Mark, in our coordinates." | `get_elements` with `link`, `category`, `level` (the link's level name), `params`; locations in host coordinates |
 | "Compare the link's grids and levels with ours." | `list_grids` and `list_levels`, once without and once with `link` |
 | "Only the link's elements visible in plan FIRST FLOOR." | `get_elements` with `link` and `view` (a host view) |
+| "Where are our base point and survey point, and the angle to true north?" | `get_coordinates` |
+| "Is the architectural link placed by shared coordinates?" | `get_coordinates` with `link`: `sharedCoordinatesAgree`, else the offset and rotation |
+| "Clash our beams and columns against the MEP link." | `link_clashes` with `link`, `category`; pairs with volume and a point, by category pair |
+| "Reload the architectural link" / "reload it from the new issue" / "unload it" | `link_reload` (with `path`), `link_unload` (after the commit) |
+| "Pin every link and set them to overlay." | `link_set` with `pinned`, `attachment` |
+| "Which dimensions on sheet S-101 have overridden text?" | `list_annotations` with `sheet`, `only_issues` |
 
 Check: ids, types and levels in the result belong to the linked model; `coordinates: link` gives the linked model's own
 coordinates instead of host coordinates. A link must be loaded to be read.
@@ -342,6 +364,15 @@ a placed sample and reshapes it, `legend_create` duplicates an existing legend a
 | "Beams on FF: 3 T16 bottom, 2 T12 top, stirrups T8 @ 150, cover 40, anchorage 40 Ø with 250 bends, laps 50 Ø, 12 m bars." | `rebar_beam` (anchorage_d 40, bend_leg 250, lap_d 50, stock_length 12000) |
 | "Footings F1: T16 @ 200 bottom both ways, cover 75, top mesh T12 @ 250, bottom bars turned up." | `rebar_footing` (top, top_bar, top_spacing, end_bends) |
 | "Slab: T12 @ 200 top and bottom both ways." | `rebar_area` (layers both) |
+| "Which bar, hook, fabric and coupler types does the model have?" | `list_reinforcement_types` |
+| "Slab edge: T12 @ 200, 1500 long, along this line, bottom face." | `path_reinforcement` (bar, spacing, length, face) |
+| "Wall dowels: T16 @ 150, 1200 long, along the wall base, alternating T12 1000 long." | `path_reinforcement` (alternating) |
+| "Mesh A393 over this slab, bottom, laps 400 / 300." | `fabric_area` (sheet_type, location, lap_major, lap_minor) |
+| "Add 90° hooks at the start of these bars, turned right." | `rebar_hooks` (start, start_orientation) |
+| "Couple bar 1234 (end) to bar 1240 (start) with the T20 coupler." | `coupler_place` |
+| "Annotate the bottom bars in Section 1: dimension and tag." | `rebar_annotate` |
+| "Show the rebar numbering and remove the gaps in partition B1." | `list_numbering`, `rebar_numbering` (remove_gaps) |
+| "(Revit 2027) Splice these bars: 12 m maximum, lap 50 Ø." | `splice_type_create` (lap_d 50), `rebar_splice` (rules max_length 12000) |
 | "BBS of everything on the GF to Excel." | `bbs_report` |
 
 **No design.** The reinforcement operations place the reinforcement you specify; they do not design it. Every
@@ -368,6 +399,16 @@ geometry; cover is to the outer face of the outermost bar. Review the bars in a 
 | "Group these footings and place the group at 3 more points; ungroup the old one." | `group_create`, `group_place`, `ungroup` (`list_groups`) |
 | "Make an assembly of this precast beam and its bars, with 3D, front and section views and a parts list." | `assembly_create`, then `assembly_views` (`list_assemblies`) |
 | "What exactly is this element's geometry: faces, volume, original shape?" | `get_geometry` (also inside a link) |
+| "Fire dampers of type FD-1 where supply duct 512345 crosses the fire walls 98765 and 98766 of the architecture link." | `mep_crossings` (find them), then `mep_accessory_place` with `items` [{run, crossing}] and `crossing_link` |
+| "A volume damper on this duct 1.5 m after the tee; a gate valve on pipe 61234 at this point." | `mep_accessory_place` with `items` [{run, point}] |
+| "50 mm duct insulation of type X on the whole supply system; which ducts have none?" | `mep_insulation_add` with `system`, `type`, `thickness`; `mep_insulation` with `missing_only` |
+| "Sleeves of type PS-1 where the drainage stacks pass the slabs: outside diameter plus 50 mm, length the slab depth." | `mep_crossings` (find them), then `sleeve_place` with `set` {"Diameter": "run_outside_diameter + 50", "Length": "crossing_length"} |
+| "Pendent sprinklers at these points 2.8 m above Level 1, each dropped to branch pipe 70123." | `mep_fixture_place` with `type`, `points`, `height`, `main` |
+| "WC and basin at these points, then a 110 mm soil pipe from the WC at 2 % fall to the stack." | `mep_fixture_place`, then `mep_route` with `from` {element, classification: Sanitary} and `slope` 2 |
+| "Double sockets on wall 4521 of the architecture link at 300 mm; circuit them on DB-1, 20 A, 'Sockets L1'." | `mep_fixture_place` with `walls` and `wall_link`, then `electrical_circuit_create` |
+| "Which panels and circuits are there, their loads, and which devices are on no circuit?" | `electrical_circuits` |
+| "A cable tray along this path, teed into the main tray." | `mep_route` with `kind` cable_tray and `to_main` (or `mep_connect`) |
+| "MEP quantities to Excel: lengths by system, size and type, fittings, insulation, circuits." | `mep_report` with `path` |
 
 ### 4.11 Model management
 
@@ -391,7 +432,7 @@ geometry; cover is to the outer face of the outermost bar. Review the bars in a 
 
 ## 5. Feature reference
 
-One tool, `revit(action, params)`: 45 read actions, 9 server actions and 118 edit operations inside the single `edit`
+One tool, `revit(action, params)`: 72 read actions, 9 server actions, 4 worksharing actions and 156 edit operations inside the single `edit`
 action. Parameters for every one: [docs/ACTIONS.md](docs/ACTIONS.md).
 
 ### 5.1 Read actions (never change the model)
@@ -410,7 +451,10 @@ action. Parameters for every one: [docs/ACTIONS.md](docs/ACTIONS.md).
 | | `get_element` | One element in full: every parameter, location, bounding box, host; also inside a link |
 | | `get_selection` | Your current selection |
 | | `show_elements` | Selects and zooms to elements (changes the view only) |
-| Links and CAD | `list_links` | Revit links (path, loaded, transform) and linked / imported CAD files |
+| Links and CAD | `list_links` | Revit links (path, loaded, IFC, transform) and linked / imported CAD files |
+| | `get_coordinates` | Base points, survey point, internal origin, true north, site; for a link, whether shared coordinates agree |
+| | `link_clashes` | Hard clashes with a Revit / IFC link: pairs, volume, point, by category pair |
+| | `list_annotations` | Dimension values and shown text (overrides), spots, tag texts, text notes, with QA flags |
 | | `get_cad_geometry` | Lines, arcs, circles, polylines of a DWG / DXF by layer, in model coordinates |
 | | `cad_columns` | Column outlines on a layer with size, rotation and matched type (what `columns_from_cad` would place) |
 | Quantities | `takeoff` | Count, length, area, volume, grouped by type, level or both |
@@ -418,7 +462,24 @@ action. Parameters for every one: [docs/ACTIONS.md](docs/ACTIONS.md).
 | | `formwork_takeoff` | Formwork areas: sides, soffits |
 | | `steel_takeoff` | Steel by section: count, length, kg, kg/m |
 | | `rebar_takeoff` | Bars, length, weight, grouped |
-| | `rebar_list` | Every bar set for a bar bending schedule: member, mark, type, diameter, shape, number, lengths, A..J, weight |
+| | `rebar_list` | Every bar set for a bar bending schedule: member, mark, type, diameter, shape, number, lengths, A..J, weight; fabric sheets and couplers |
+| Clearances and crossings | `ray_cast` | What is above / below / beside a point or element, into links |
+| | `clearances` | Clear distance under (or over) each element of a category, smallest first |
+| | `mep_crossings` | MEP runs passing through beams, walls, slabs, columns (MEP and structure links) |
+| MEP | `mep_systems`, `mep_quantities` | Systems; run lengths by size / type / system; fittings and equipment counts |
+| Spaces, analysis | `list_spaces` | Rooms, areas, spaces: area, volume, unplaced / not enclosed |
+| | `analytical_model`, `list_loads` | Analytical members / panels, releases; load cases, combinations, loads |
+| | `steel_connections` | Steel connections: type, members, approval |
+| MEP / HVAC checks | `mep_flow`, `mep_connectivity`, `air_terminals` | Revit's flow / velocity / friction / pressure drop with limits you give; open ends and elements in no system; terminals vs space airflow |
+| | `mep_insulation` | Insulation and lining per duct / pipe / fitting / accessory: type, thickness, totals by type, elements with none |
+| | `electrical_circuits` | Panels, circuits and their loads as Revit computes them; loads on no circuit |
+| Documents | `list_documents`, `model_files` | Open models (document_id to read any of them); file facts of a folder without opening |
+| | `model_open`, `model_close`, `model_new` | Open (workshared always detached), close what Claude opened, new scratch project; never saves |
+| | `batch_read` | One read over many files: open in the background, read, close without saving |
+| Worksharing | `worksharing_status` | Central path, what you hold, per element: owner, checkout, current with central |
+| | `sync_with_central`, `reload_latest`, `relinquish`, `checkout` | Own actions (not edit operations), each needs the edit permission; sync and relinquish also `confirm: true` |
+| | `list_numbering` | Rebar, fabric and coupler numbering: partitions, numbers in use, gaps |
+| | `list_reinforcement_types` | Bar, hook, path / area / fabric, fabric sheet and wire, coupler and rebar annotation types |
 | | `list_schedules`, `get_schedule_data` | Schedules, and the rows of one as displayed |
 | Model QA | `check_materials` | Missing, default or wrongly named materials; steel with a non-metal material |
 | | `find_overlaps` | Measured overlap pairs and direct coincidence or containment evidence |
@@ -444,6 +505,7 @@ action. Parameters for every one: [docs/ACTIONS.md](docs/ACTIONS.md).
 |---|---|
 | `help` | Every action and parameter, or one topic; flags differences between server and add-in |
 | `qs_report` | QS workbook (.xlsx) from the read actions; reads only, writes the file |
+| `mep_report` | MEP quantities workbook (.xlsx): runs by system / size / type / level, fittings and devices, insulation, panels and circuits; reads only, writes the file |
 | `bbs_report` | Bar bending schedule workbook (.xlsx): BBS sheet, summary by diameter and member |
 | `params_to_excel` / `params_from_excel` | Parameters out to Excel and the changed cells back (the second changes the model) |
 | `excel_template` / `excel_to_model` | Input workbook, and the model built from it in one batch (the second changes the model) |
@@ -467,7 +529,7 @@ action. Parameters for every one: [docs/ACTIONS.md](docs/ACTIONS.md).
 | | `view_template_create`, `view_template_apply` | View templates |
 | | `dimension_elements`, `spot_elevation` | Chain dimensions through element faces and grids; spot elevations on top faces |
 | | `revision_create`, `revision_cloud_create`, `sheet_layout` | Revisions on sheets, clouds; several views and schedules on one sheet |
-| Reinforcement | `rebar_column`, `rebar_beam`, `rebar_footing`, `rebar_area` | Column bars (laps, top bends, footing feet) and zoned ties; beam bars anchored into supports, lapped past stock length, zoned stirrups; footing meshes with optional U bars; slab area reinforcement. All values from the engineer (no defaults, no code checks) |
+| Reinforcement | `rebar_column`, `rebar_beam`, `rebar_footing`, `rebar_area`, `path_reinforcement`, `fabric_area`, `fabric_sheet_place`, `rebar_hooks`, `coupler_place`, `rebar_annotate`, `rebar_numbering`, `splice_type_create` and `rebar_splice` (2027) | Column bars (laps, top bends, footing feet) and zoned ties; beam bars anchored into supports, lapped past stock length, zoned stirrups; footing meshes with optional U bars; slab area reinforcement. All values from the engineer (no defaults, no code checks) |
 | From CAD | `columns_from_cad` | Columns from outlines, typed by size, rotated, missing sizes created |
 | | `grids_from_cad` | Grids from grid lines |
 | | `beams_from_cad`, `walls_from_cad` | Beams / walls from pairs of edge lines or concentric arcs, typed by width |
@@ -502,7 +564,18 @@ action. Parameters for every one: [docs/ACTIONS.md](docs/ACTIONS.md).
 | Sheets | `sheets_from_views` | One sheet per view: numbered, named from a template, title block, view template, scale |
 | Openings | `opening_create` | Slab / roof openings, beam web sleeves and top holes, wall openings |
 | | `shaft_create` | Shaft through every slab between two levels |
-| Links | `cad_link`, `revit_link` | Link or import DWG / DXF; link a Revit model |
+| | `crossing_opening` | Opening where a duct, pipe, tray or conduit (host or link) crosses a host wall, slab or beam: run size plus the clearance given |
+| MEP / HVAC | `mep_route`, `mep_connect`, `mep_system_create` | Connected runs with elbows; branch + tap from a terminal / equipment to a main; systems from terminals / equipment |
+| | `mep_accessory_place` | Dampers, fire dampers and valves of a given type inserted in a run at a point or where it crosses a given wall / slab (host or link) |
+| | `mep_insulation_add`, `mep_insulation_remove` | Duct / pipe insulation and duct lining of a given type and thickness on elements or a whole system; replace or remove |
+| | `sleeve_place` | Sleeves of a given type at crossings (host or link), sized from the engineer's values or measured lengths plus clearance |
+| | `mep_fixture_place` | Plumbing fixtures, sprinklers, electrical / lighting / low-voltage devices at points: level, ceiling plane or wall face (host or link); optionally connected to a main |
+| | `electrical_circuit_create`, `electrical_circuit_edit`, `electrical_panel_set` | Circuits from the engineer's list (loads, panel, rating, load name); change them; panel distribution system and name |
+| MEP | `mep_run_create` | Straight ducts, pipes, cable trays and conduits between points with given types, systems and sizes |
+| Rooms and spaces | `room_create`, `room_separation` | Rooms or spaces at points (names, numbers) or in every enclosed region; separation lines |
+| Analytical model and loads | `analytical_member_create`, `analytical_panel_create` | Analytical members and panels, associated with physical elements |
+| | `load_case_create`, `load_combination_create`, `load_place` | Load cases; combinations from given factors; point, line and area loads with given values on analytical elements |
+| Links | `cad_link`, `revit_link`, `link_reload`, `link_unload`, `link_set` | Link or import DWG / DXF; link a Revit model; reload (also from another file), unload, pin, overlay / attachment, path type |
 | Export and save | `export_dwg`, `export_pdf`, `export_ifc`, `export_nwc`, `export_image`, `export_schedule` | Views and sheet sets by number pattern with file names from a template; IFC, NWC, PNG, CSV |
 | | `export_dwf`, `export_dgn`, `export_fbx`, `export_gbxml` | DWF (merged or per view), DGN per view, FBX of a 3D view, gbXML |
 | | `save`, `save_as` | Save; save as (not for workshared models) |
@@ -529,7 +602,7 @@ Compare the result with the drawing before building on it: `cad_columns` and `pr
 
 | Not possible (yet) | What to do instead |
 |---|---|
-| Reinforce curved or sloped beams, walls, irregular members; path reinforcement; rebar couplers | Model them in Revit; `rebar_list` / `bbs_report` include every bar. |
+| Reinforce curved or sloped beams, irregular members; Revit 2027 cranks and new numbering schemas | Model them in Revit; `rebar_list` / `bbs_report` include every bar. |
 | Radial / diameter dimensions in Revit 2024; spot slopes | The 2024 API has no call to create radial dimensions (`dimension_radial` works in 2027); no Revit version can create spot slopes through the API. Place them in Revit. |
 | DGN without a DGN setup or seed file; gbXML of a model without a usable energy model | `export_dgn` needs a DGN setup saved in the model or `seed`; `export_gbxml` failed live on a bare test project (no compatible energy analysis model). Set them up in Revit, or export from Revit. |
 | Appearance assets other than Generic, or properties beyond the render colour | `material_asset_set` changes the Generic diffuse colour; edit other appearance properties in the Material Browser. |
@@ -557,10 +630,16 @@ Also good to know:
 - **Model and file outcomes.** Transaction failures are reported separately from post-commit failures. CAD and bulk-join operations can report skipped or failed individual items. Dry runs roll model changes back and skip deferred work.
 - **Audit log.** Every permission decision and every edit batch is written to `%LOCALAPPDATA%\RevitMcpBridge\audit.log`.
 - **Overwrite protection.** Exporting, saving or writing a workbook onto an existing file needs `overwrite: true`.
+- **Allowed folders (optional).** Create `%LOCALAPPDATA%\RevitMcpBridge\allowed_roots.txt` with one folder per line
+  (`#` starts a comment), for example your project drive and share. Every path a request names (models to open,
+  families, links, exports, workbooks) must then lie inside one of them. Without the file any full path is accepted.
+  Device paths (`\\?\`, `\\.\`) are always refused.
+- **Ignored options are reported.** An option that the add-in never read and that the catalogue does not list for that
+  action (usually a misspelling) comes back as `ignoredParams` instead of being dropped silently.
 - **Sanity limits.** 500 operations per batch; coordinates more than about 30 km from the origin are rejected as unit
   mistakes; requests up to 4 MB; lists are cut at their `limit` and say so (`truncated: true`); long checks
   (`find_overlaps`, `join_overlaps`) stop at a time budget and continue with `resume_after`.
-- **Busy Revit.** A queued request is cancelled if it cannot start within 30 seconds. A running edit may finish after a client timeout. Check the operation receipt before submitting again.
+- **Busy Revit.** A queued request is cancelled if it cannot start within 30 seconds. A running edit may finish after a client timeout. Check the operation receipt before submitting again: `get_operation_status` without an `operation_id` lists the edits this server sent, with `applied` and whether the reply was delivered.
 
 > **Note.** The Yes / No dialog stops the tool from approving itself. It cannot stop a Claude session that also
 > controls your screen from clicking "Yes", so only give such a session edit work you would approve yourself.
@@ -614,7 +693,7 @@ server/
   server.py                   the MCP tool(s) and the dispatch tables
   catalog.py                  all wording Claude sees; groups mirror the add-in files
   bridge_client.py            connection, token, session selection
-  qs_report.py, excel_io.py   workbooks; xlsx_util.py shared header style, path checks, cell values
+  qs_report.py, mep_report.py, excel_io.py   workbooks; xlsx_util.py shared header style, path checks, cell values
 tests/                        smoke_test.py (no Revit needed), live_read.py (against the open model)
 tools/                        gen_docs.py (docs/ACTIONS.md), write_client_configs.py, deploy_addin.ps1 (used by build.bat)
 package/                      install.bat, uninstall.bat, configure_clients.ps1, INSTALL.txt (go into RevitMcp.zip)

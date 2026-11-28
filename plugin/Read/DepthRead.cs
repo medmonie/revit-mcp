@@ -7,12 +7,12 @@ internal static class DepthRead
     {
         var doc = rc.Doc;
         string kind = Choice(p, "kind", "all", "all", "model", "detail");
-        var instances = new FilteredElementCollector(doc).OfClass(typeof(Group)).Cast<Group>().ToList();
+        var instances = new FilteredElementCollector(doc).OfClass(typeof(Group)).Cast<Group>().ToLookup(g => g.GroupType.Id.Value);
         var types = new FilteredElementCollector(doc).OfClass(typeof(GroupType)).Cast<GroupType>()
             .Select(t =>
             {
                 bool detail = t.Category?.Id.Value == (long)BuiltInCategory.OST_IOSDetailGroups;
-                var mine = instances.Where(g => g.GroupType.Id == t.Id).ToList();
+                var mine = instances[t.Id.Value].ToList();
                 return new { t, detail, mine };
             })
             .Where(x => kind == "all" || (kind == "detail") == x.detail)
@@ -33,7 +33,8 @@ internal static class DepthRead
     {
         var doc = rc.Doc;
         var views = new FilteredElementCollector(doc).OfClass(typeof(View)).Cast<View>()
-            .Where(v => v.AssociatedAssemblyInstanceId != null && v.AssociatedAssemblyInstanceId != ElementId.InvalidElementId).ToList();
+            .Where(v => v.AssociatedAssemblyInstanceId != null && v.AssociatedAssemblyInstanceId != ElementId.InvalidElementId)
+            .ToLookup(v => v.AssociatedAssemblyInstanceId.Value);
         var rows = new FilteredElementCollector(doc).OfClass(typeof(AssemblyInstance)).Cast<AssemblyInstance>()
             .OrderBy(a => a.AssemblyTypeName, StringComparer.OrdinalIgnoreCase)
             .Select(a => new Obj
@@ -44,7 +45,7 @@ internal static class DepthRead
                 ["memberCategories"] = a.GetMemberIds().Select(i => doc.GetElement(i)?.Category?.Name).Where(n => n != null)
                     .GroupBy(n => n).ToDictionary(g => g.Key, g => (object)g.Count()),
                 ["center"] = U.Xyz(a.GetCenter()),
-                ["views"] = views.Where(v => v.AssociatedAssemblyInstanceId == a.Id).Select(v => new { id = v.Id.Value, name = v.Name, type = v.ViewType.ToString() }).ToList(),
+                ["views"] = views[a.Id.Value].Select(v => new { id = v.Id.Value, name = v.Name, type = v.ViewType.ToString() }).ToList(),
             });
         return Describe.Page(p, rows, "assemblies", 200, 5000);
     }
@@ -53,7 +54,7 @@ internal static class DepthRead
 
     private sealed class Walk
     {
-        public Transform Tf;
+        public double VolumeFeet3;
         public bool Faces, Edges;
         public int FaceLimit;
         public int FacesListed;
@@ -61,6 +62,7 @@ internal static class DepthRead
         public readonly List<object> Solids = new List<object>();
         public readonly List<object> Curves = new List<object>();
         public int Meshes;
+        private int _visited;
 
         private static double[] V(XYZ v) => new[] { Math.Round(v.X, 6), Math.Round(v.Y, 6), Math.Round(v.Z, 6) };
 
@@ -77,28 +79,26 @@ internal static class DepthRead
             return o;
         }
 
-        public void Run(GeometryElement ge, Transform tf)
+        public void Run(GeometryElement ge, Transform tf, int depth = 0)
         {
             if (ge == null) return;
+            if (depth > 64) throw new InvalidOperationException("Geometry nesting exceeds 64 levels.");
             foreach (GeometryObject g in ge)
             {
+                if (++_visited > 100000) throw new InvalidOperationException("Element geometry exceeds the 100,000-object traversal limit.");
                 switch (g)
                 {
                     case GeometryInstance gi:
-                        Run(gi.GetInstanceGeometry(), tf);   // instance geometry is already in model coordinates
+                        Run(gi.GetInstanceGeometry(), tf, depth + 1);
                         break;
                     case Solid s when s.Volume > 1e-9 || s.Faces.Size > 0:
                     {
                         var o = new Obj { ["volume_m3"] = U.Volume(s.Volume), ["surfaceArea_m2"] = U.Area(s.SurfaceArea), ["faces"] = s.Faces.Size, ["edges"] = s.Edges.Size };
+                        VolumeFeet3 += s.Volume;
                         try { if (s.Volume > 1e-9) o["centroid"] = U.Xyz(tf.OfPoint(s.ComputeCentroid())); } catch { /* not closed */ }
                         var bb = s.GetBoundingBox();
                         if (bb != null)
-                        {
-                            var full = tf.Multiply(bb.Transform);
-                            var a = full.OfPoint(bb.Min); var b = full.OfPoint(bb.Max);
-                            o["box"] = new { min = U.Xyz(new XYZ(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Min(a.Z, b.Z))),
-                                             max = U.Xyz(new XYZ(Math.Max(a.X, b.X), Math.Max(a.Y, b.Y), Math.Max(a.Z, b.Z))) };
-                        }
+                            o["box"] = Describe.Box(bb, tf);
                         if (Edges) o["edgeLength"] = U.Out(s.Edges.Cast<Edge>().Sum(e => e.ApproximateLength));
                         if (Faces)
                         {
@@ -144,15 +144,15 @@ internal static class DepthRead
             ge = fi.GetOriginalGeometry(opts)?.GetTransformed(fi.GetTransform());
         }
         else ge = e.get_Geometry(opts);
-        var walk = new Walk { Tf = link?.Tf ?? Transform.Identity, Faces = Flag(p, "faces", true), Edges = Flag(p, "edges", false),
+        var walk = new Walk { Faces = Flag(p, "faces", true), Edges = Flag(p, "edges", false),
                               FaceLimit = Int(p, "limit", 200, 1, 5000) };
-        walk.Run(ge, walk.Tf);
+        walk.Run(ge, link?.Tf ?? Transform.Identity);
         var o = new Obj
         {
             ["units"] = U.Name, ["id"] = e.Id.Value, ["category"] = e.Category?.Name, ["detail"] = detail,
             ["geometry"] = original ? "original (before joins and cuts)" : "as modelled (after joins and cuts)",
             ["solids"] = walk.Solids, ["curves"] = walk.Curves, ["meshes"] = walk.Meshes, ["truncated"] = walk.Truncated,
-            ["totalVolume_m3"] = Math.Round(walk.Solids.Cast<Obj>().Sum(s => (double)s["volume_m3"]), 4),
+            ["totalVolume_m3"] = U.Volume(walk.VolumeFeet3),
         };
         if (link != null) o["link"] = link.Info();
         return o;

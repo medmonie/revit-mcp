@@ -198,10 +198,18 @@ internal static class ModifyOps
         var r = Overlaps.Search(doc, p, computeVolume: true, maxPairs: Int(p, "max_pairs", 1000, 1, 5000));
         int joined = 0, switched = 0, failedCount = 0;
         var failed = new List<object>();
+        var cutConflict = new List<object>();
+        if (c.DryRun && doc.IsWorkshared)
+            c.Warn("dry runs on workshared models do not commit on trial, so joins Revit refuses at commit ('can't cut joined element') show only on a real run; a real run leaves those elements out and lists them.");
         foreach (var pair in r.Pairs)
         {
             // Failed volume measurements remain in the review list.
             if (pair.NeedsReview) continue;
+            if (c.SkipJoin.Contains(pair.A.Id.Value) || c.SkipJoin.Contains(pair.B.Id.Value))
+            {
+                cutConflict.Add(new { a = pair.A.Id.Value, b = pair.B.Id.Value });
+                continue;
+            }
             // first = the element that should cut (keep the shared volume)
             var (first, second) = Overlaps.Rank(pair.A, priority) <= Overlaps.Rank(pair.B, priority) ? (pair.A, pair.B) : (pair.B, pair.A);
             using (var part = new SubTransaction(doc))
@@ -231,6 +239,7 @@ internal static class ModifyOps
         return new
         {
             found = r.Pairs.Count, joined, orderSwitched = switched, failed, failedCount,
+            skippedCutConflict = cutConflict.Count > 0 ? cutConflict : null,
             reviewPairCount, unmeasuredPairs = r.Pairs.Count(pair => pair.Volume == null),
             priority = priority.Select(x => x.ToString().Substring(4)).ToList(),
             steelPairsSkipped = r.SkippedSteel,
@@ -295,7 +304,7 @@ internal static class ModifyOps
     private static object FamilyLoad(EditContext c, Obj p)
     {
         var doc = c.Doc;
-        string path = NeedStr(p, "path");
+        string path = EditContext.FullPath(NeedStr(p, "path"), "path");
         if (!File.Exists(path)) throw new ArgumentException($"Family file not found: {path}");
         bool loaded = doc.LoadFamily(path, out Family family);
         if (!loaded || family == null)

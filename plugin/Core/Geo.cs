@@ -27,19 +27,23 @@ internal static class Geo
     /// <summary>Volume shared by two elements in cubic feet, or null when Revit cannot intersect their solids.</summary>
     public static double? OverlapVolume(Element a, Element b)
     {
-        try
-        {
-            double v = 0;
-            var sb = Solids(b);
-            foreach (var x in Solids(a))
-                foreach (var y in sb)
+        // Revit's Boolean intersection refuses some solid pairs (InvalidOperationException); one refused pair must not
+        // hide the overlap of the others, so each pair is tried on its own.
+        List<Solid> sa, sb;
+        try { sa = Solids(a); sb = Solids(b); } catch { return null; }
+        double v = 0; int refused = 0, tried = 0;
+        foreach (var x in sa)
+            foreach (var y in sb)
+            {
+                tried++;
+                try
                 {
                     var r = BooleanOperationsUtils.ExecuteBooleanOperation(x, y, BooleanOperationsType.Intersect);
                     if (r != null) v += r.Volume;
                 }
-            return v;
-        }
-        catch { return null; }
+                catch { refused++; }
+            }
+        return tried > 0 && refused == tried ? (double?)null : v;
     }
 
     public sealed class Areas { public double Side, Bottom, Top; }

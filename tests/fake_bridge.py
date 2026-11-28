@@ -39,6 +39,10 @@ def permission() -> dict:
 
 
 def handle(method: str, params: dict):
+    if method in catalog.WORKSHARE_ACTIONS:
+        if params.get("document_id") != DOCUMENT_ID or not params.get("operation_id"):
+            raise ValueError("Expected document and operation IDs.")
+        return {"applied": True, "method": method}
     if method == "get_operation_status":
         op_id = params["operation_id"]
         return {"operationId": op_id, "state": "completed", "result": RECEIPTS[op_id][1]} if op_id in RECEIPTS else {
@@ -116,12 +120,37 @@ def handle(method: str, params: dict):
                 "reviewPairCount": 1,
                 "reviewPairs": [{"a": {"id": 8, "label": "Columns : C9"}, "b": {"id": 9, "label": "Columns : C9"},
                                  "kind": "coincident_geometry", "overlap_m3": 1.15}]}
+    if method == "mep_quantities":
+        by = params.get("group_by", "size")
+        key = {"system": "Supply Air 1", "size": "600x300", "type": "Rect : Std", "level": "L1"}[by]
+        out = {"groupBy": by, "runs": 3, "note": "n",
+               "lengths": [{"category": "Ducts", "key": key, "pieces": 2, "lengthM": 12.5, "surfaceAreaM2": 22.5},
+                           {"category": "Pipes", "key": "DCW 1" if by == "system" else "50 dia", "pieces": 1, "lengthM": 4.0, "surfaceAreaM2": None}],
+               "totalsByCategory": [{"category": "Ducts", "lengthM": 12.5, "pieces": 2}, {"category": "Pipes", "lengthM": 4.0, "pieces": 1}]}
+        out["counts"] = [{"category": "Duct Accessories", "count": 2, "byType": [{"type": "Fire Damper : Std", "count": 2}]}] if params.get("fittings") else []
+        return out
+    if method == "mep_insulation":
+        return {"elements": 3, "insulated": 2, "lined": 0, "withNeither": 1, "note": "n",
+                "byTypeAndThickness": [{"type": "insulation Duct Wrap 25", "elements": 2, "runLength": 12.5}],
+                "items": [{"id": 77, "category": "Pipes", "system": "DCW 1", "size": "50", "insulation": None, "lining": None}]}
+    if method == "electrical_circuits":
+        return {"panelCount": 1, "circuitCount": 1, "notOnACircuit": 1, "note": "n",
+                "panels": [{"id": 5, "name": "DB-1", "type": "Panel : 400V", "distributionSystem": "400/230 Wye", "circuits": 1,
+                            "connectedLoad": "1.80 kVA", "demandLoad": "1.80 kVA", "demandCurrent": "2.60 A", "mainsRating": "100 A"}],
+                "circuits": [{"id": 9, "panel": "DB-1", "circuit": "1", "kind": "PowerCircuit", "loadName": "Sockets", "poles": "1",
+                              "voltage": "230 V", "apparentLoad": "1800 VA", "current": "7.8 A", "rating": "20 A", "elementCount": 3}],
+                "unassigned": [{"id": 31, "category": "Electrical Fixtures", "type": "Socket : Double", "level": "L1"}]}
     if method in catalog.READ_ACTIONS:
         return {"note": f"fake bridge has no canned data for {method}"}
     raise ValueError(f"unknown method '{method}'")
 
 
 def edit(params: dict) -> dict:
+    if os.environ.get("FAKE_EDIT") == "rollback":
+        return {"applied": False, "failedAt": 1, "error": "fixture rollback"}
+    if os.environ.get("FAKE_EDIT") == "postcommit":
+        return {"applied": True, "dryRun": False, "succeeded": False, "postCommitFailed": 1,
+                "postCommit": [{"op": "save", "error": "fixture save failed"}]}
     ops = params.get("operations") or []
     dry = bool(params.get("dry_run"))
     if not STATE["editingAllowed"]:
@@ -152,8 +181,17 @@ class Handler(socketserver.StreamRequestHandler):
                 reply = {"id": req.get("id"), "ok": False, "error": "unauthorized"}
             else:
                 try:
-                    reply = {"id": req.get("id"), "ok": True,
-                             "result": handle(req.get("method", ""), req.get("params") or {})}
+                    params = req.get("params") or {}
+                    reply = {"id": req.get("id"), "ok": True, "result": handle(req.get("method", ""), params)}
+                    # Like the add-in: the request keys no handler read. The fake reads none through a tracked
+                    # accessor, so it lists them all; the server must keep only those its catalogue does not know.
+                    unread = {"params": sorted(params)} if params else {}
+                    ops = {str(i): sorted(k for k in op if k != "op")
+                           for i, op in enumerate(params.get("operations") or [], 1) if isinstance(op, dict)}
+                    if any(ops.values()):
+                        unread["operations"] = {i: keys for i, keys in ops.items() if keys}
+                    if unread:
+                        reply["unread"] = unread
                 except Exception as exc:  # mirror the add-in: errors go back as ok=false
                     reply = {"id": req.get("id"), "ok": False, "error": f"{type(exc).__name__}: {exc}"}
             self.wfile.write((json.dumps(reply) + "\n").encode("utf-8"))

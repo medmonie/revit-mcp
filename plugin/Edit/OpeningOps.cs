@@ -7,6 +7,7 @@ internal static class OpeningOps
     {
         ops["opening_create"] = OpeningCreate;
         ops["shaft_create"] = ShaftCreate;
+        ops["crossing_opening"] = CrossingOpening;
     }
 
     /// <summary>A closed profile from 'boundary' ([x,y] corners) or 'center' + 'radius' (a circle), at height zFeet.</summary>
@@ -117,5 +118,150 @@ internal static class OpeningOps
         if (Dbl(p, "base_offset") is double bo) c.SetBuiltin(shaft, "WALL_BASE_OFFSET", U.In(bo));
         if (Dbl(p, "top_offset") is double to) c.SetBuiltin(shaft, "WALL_TOP_OFFSET", U.In(to));
         return new { id = shaft.Id.Value, bottomLevel = bottom.Name, topLevel = top.Name };
+    }
+
+    // ---------------------------------------------------------------- openings where an MEP run crosses structure (0.22.0)
+
+    /// <summary>The run's cross-section: round (radius) or rectangular (half sizes along two axes), in host coordinates.</summary>
+    private sealed class Section
+    {
+        public bool Round; public double R, HalfW, HalfH; public XYZ Wx, Wy; public string Text;
+        /// <summary>Half extent of the section, with the clearance, along a direction square to the run.</summary>
+        public double Half(XYZ axis, double clear) => Round ? R + clear
+            : Math.Abs(Wx.DotProduct(axis)) * HalfW + Math.Abs(Wy.DotProduct(axis)) * HalfH + clear;
+    }
+
+    private static Section SectionOf(Element m, Transform tf, XYZ dir)
+    {
+        var s = new Section { Text = Find.Builtin(m, "RBS_CALCULATED_SIZE")?.AsString() };
+        if (!(m is MEPCurve mc)) throw new ArgumentException($"Element {m.Id.Value} is not a duct, pipe, cable tray or conduit.");
+        double d = 0;
+        try { d = mc.Diameter; } catch { /* not round */ }
+        if (d > 1e-6) { s.Round = true; s.R = d / 2; return s; }
+        double w = mc.Width, h = mc.Height;
+        XYZ bx = null;
+        foreach (Connector con in mc.ConnectorManager.Connectors)
+        {
+            try { bx = tf.OfVector(con.CoordinateSystem.BasisX); break; } catch { /* no coordinate system */ }
+        }
+        if (bx == null || Math.Abs(bx.DotProduct(dir)) > 0.1)
+        {
+            // Fall back: width horizontal, square to the run (or along X for a vertical run).
+            bx = Math.Abs(dir.Z) > 0.9 ? XYZ.BasisX : XYZ.BasisZ.CrossProduct(dir).Normalize();
+        }
+        bx = (bx - dir * bx.DotProduct(dir)).Normalize();
+        s.Wx = bx; s.Wy = dir.CrossProduct(bx).Normalize(); s.HalfW = w / 2; s.HalfH = h / 2;
+        return s;
+    }
+
+    /// <summary>
+    /// An opening in a host slab, roof, wall or beam where a duct, pipe, tray or conduit (host or link) passes through it,
+    /// sized as the run's cross-section plus the clearance the engineer gives on each side. Openings are square to the
+    /// face; the run must be close to square to it (within 15 degrees).
+    /// </summary>
+    private static object CrossingOpening(EditContext c, Obj p)
+    {
+        var doc = c.Doc;
+        var host = c.Editable(Find.Elem(doc, NeedId(p, "structure")));
+        double clear = U.In(NeedDbl(p, "clearance"));
+        if (clear < 0) throw new ArgumentException("'clearance' must be zero or more.");
+        string shape = Choice(p, "shape", "auto", "auto", "round", "rectangular");
+
+        Document mdoc = doc; Transform mtf = Transform.Identity;
+        if (Has(p, "mep_link"))
+        {
+            var inst = LinkScope.Resolve(doc, NeedRef(p, "mep_link"));
+            mdoc = inst.GetLinkDocument() ?? throw new ArgumentException($"Link '{inst.Name}' is not loaded.");
+            mtf = inst.GetTotalTransform();
+        }
+        var m = mdoc.GetElement(NeedId(p, "mep")) ?? throw new ArgumentException($"No element {NeedRef(p, "mep")} in {mdoc.Title}.");
+        if (!(m.Location is LocationCurve lc) || !(lc.Curve is Line run)) throw new ArgumentException($"Element {m.Id.Value} is not a straight run.");
+        XYZ a = mtf.OfPoint(run.GetEndPoint(0)), b = mtf.OfPoint(run.GetEndPoint(1));
+        var dir = (b - a).Normalize();
+
+        // Where the centreline is inside the host (its solids already include any opening cut in it).
+        var segs = new List<(XYZ p0, XYZ p1)>();
+        var opt = new SolidCurveIntersectionOptions { ResultType = SolidCurveIntersectionMode.CurveSegmentsInside };
+        foreach (var solid in Geo.Solids(host))
+        {
+            SolidCurveIntersection hit;
+            try { hit = solid.IntersectWithCurve(Line.CreateBound(a, b), opt); } catch { continue; }
+            for (int i = 0; i < hit.SegmentCount; i++)
+            {
+                var seg = hit.GetCurveSegment(i);
+                if (seg.Length > 0.003) segs.Add((seg.GetEndPoint(0), seg.GetEndPoint(1)));
+            }
+        }
+        if (segs.Count == 0)
+            throw new ArgumentException($"Run {m.Id.Value} does not pass through element {host.Id.Value} (or an opening there already clears its centreline).");
+        var near = Has(p, "at") ? U.NeedPt(p, "at") : null;
+        var pick = near == null ? segs[0] : segs.OrderBy(sg => ((sg.p0 + sg.p1) / 2).DistanceTo(near)).First();
+        var center = (pick.p0 + pick.p1) / 2;
+
+        var sec = SectionOf(m, mtf, dir);
+        bool round = shape == "auto" ? sec.Round : shape == "round";
+        if (round && !sec.Round)
+        {   // a round opening around a rectangular run: the circle through its corners
+            sec = new Section { Round = true, R = Math.Sqrt(sec.HalfW * sec.HalfW + sec.HalfH * sec.HalfH), Text = sec.Text };
+        }
+        const double square = 0.966;   // cos 15 degrees
+        Opening opening;
+        string note = null;
+        var o = new Obj();
+
+        if (host is Wall wall)
+        {
+            if (!(wall.Location is LocationCurve wl) || !(wl.Curve is Line wline)) throw new ArgumentException("Openings in curved walls are not supported; use opening_create.");
+            var along = wline.Direction.Normalize();
+            var normal = XYZ.BasisZ.CrossProduct(along).Normalize();
+            if (Math.Abs(dir.DotProduct(normal)) < square) throw new ArgumentException("The run is not square to the wall (more than 15 degrees off); use opening_create with the size you want.");
+            double hw = sec.Half(along, clear), hh = sec.Half(XYZ.BasisZ, clear);
+            opening = doc.Create.NewOpening(wall, center - along * hw - XYZ.BasisZ * hh, center + along * hw + XYZ.BasisZ * hh);
+            if (round) note = "Wall openings are rectangular: the opening is the square around the round size.";
+            o["width"] = U.Out(2 * hw); o["height"] = U.Out(2 * hh);
+        }
+        else if (host is FamilyInstance member && (member.StructuralType == RStruct.StructuralType.Beam || member.StructuralType == RStruct.StructuralType.Brace))
+        {
+            if (!(member.Location is LocationCurve ml)) throw new ArgumentException("The member has no location line.");
+            var axis = ml.Curve.ComputeDerivatives(ml.Curve.Project(center).Parameter, false).BasisX;
+            axis = new XYZ(axis.X, axis.Y, 0).Normalize();
+            var side = XYZ.BasisZ.CrossProduct(axis).Normalize();
+            if (Math.Abs(dir.DotProduct(side)) < square) throw new ArgumentException("The run is not square to the beam web (more than 15 degrees off); use opening_create.");
+            var q = new Obj { ["face"] = "web", ["center"] = new List<object> { U.Out(center.X), U.Out(center.Y), U.Out(center.Z) } };
+            if (round) { q["radius"] = U.Out(sec.R + clear); o["diameter"] = U.Out(2 * (sec.R + clear)); }
+            else { double hw = sec.Half(axis, clear), hh = sec.Half(XYZ.BasisZ, clear); q["width"] = U.Out(2 * hw); q["height"] = U.Out(2 * hh); o["width"] = q["width"]; o["height"] = q["height"]; }
+            opening = MemberOpening(doc, member, q);
+        }
+        else if (host is Floor || host is RoofBase || host is Ceiling)
+        {
+            if (Math.Abs(dir.Z) < square) throw new ArgumentException("The run is not vertical where it crosses (more than 15 degrees off); use opening_create.");
+            double z = host.get_BoundingBox(null)?.Max.Z ?? center.Z;
+            var c0 = new XYZ(center.X, center.Y, z);
+            var arr = new CurveArray();
+            if (round)
+            {
+                double r = sec.R + clear;
+                arr.Append(Arc.Create(c0, r, 0, Math.PI, XYZ.BasisX, XYZ.BasisY));
+                arr.Append(Arc.Create(c0, r, Math.PI, 2 * Math.PI, XYZ.BasisX, XYZ.BasisY));
+                o["diameter"] = U.Out(2 * r);
+            }
+            else
+            {
+                XYZ ux = new XYZ(sec.Wx.X, sec.Wx.Y, 0).Normalize(), uy = XYZ.BasisZ.CrossProduct(ux);
+                double hx = sec.HalfW + clear, hy = sec.HalfH + clear;
+                var pts = new[] { c0 - ux * hx - uy * hy, c0 + ux * hx - uy * hy, c0 + ux * hx + uy * hy, c0 - ux * hx + uy * hy };
+                for (int i = 0; i < 4; i++) arr.Append(Line.CreateBound(pts[i], pts[(i + 1) % 4]));
+                o["width"] = U.Out(2 * hx); o["height"] = U.Out(2 * hy);
+            }
+            opening = doc.Create.NewOpening(host, arr, true);
+        }
+        else throw new ArgumentException($"Openings from crossings are made in walls, slabs, roofs, ceilings, beams and braces, not in {host.Category?.Name}.");
+
+        o["id"] = opening.Id.Value; o["structure"] = host.Id.Value; o["structureCategory"] = host.Category?.Name;
+        o["mep"] = m.Id.Value; o["mepModel"] = mdoc.Title; o["mepSize"] = sec.Text; o["shape"] = round && !(host is Wall) ? "round" : "rectangular";
+        o["clearance"] = U.Out(clear); o["at"] = U.Xyz(center);
+        if (segs.Count > 1) o["crossingsInThisElement"] = segs.Count;
+        if (note != null) o["note"] = note;
+        return o;
     }
 }

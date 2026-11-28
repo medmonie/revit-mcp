@@ -17,7 +17,7 @@ mkdir "%OUT%\addin"
 echo [1/4] add-in >> "%LOG%"
 set FOUND=0
 set "MISSING="
-for %%Y in (2024 2027) do call :release %%Y
+for %%Y in (2024 2027) do call :release %%Y || goto fail
 if "%FOUND%"=="0" goto fail
 
 echo [2/4] server exe >> "%LOG%"
@@ -25,7 +25,7 @@ if not exist "server\.venv\Scripts\python.exe" (echo server\.venv missing: run s
 server\.venv\Scripts\python -m pip install -r server\requirements.txt pyinstaller >> "%LOG%" 2>&1 || goto fail
 server\.venv\Scripts\python -m PyInstaller --onefile --noconfirm --name revit-mcp-server --collect-all mcp --paths server ^
   --hidden-import catalog --hidden-import bridge_client --hidden-import excel_io --hidden-import qs_report ^
-  --hidden-import bbs_report --hidden-import xlsx_util --collect-submodules openpyxl ^
+  --hidden-import bbs_report --hidden-import mep_report --hidden-import xlsx_util --collect-submodules openpyxl ^
   --distpath "%OUT%" --workpath dist\_work --specpath dist\_work server\server.py >> "%LOG%" 2>&1 || goto fail
 if not exist "%OUT%\revit-mcp-server.exe" goto fail
 rem The exe must start and answer the MCP handshake; the smoke test does that against the Python sources already.
@@ -63,27 +63,29 @@ set "DEST=%OUT%\addin\%Y%"
 if defined API (
   if exist "plugin\bin\%Y%" rmdir /s /q "plugin\bin\%Y%"
   dotnet build plugin -c Release --no-incremental -p:RevitYear=%Y% -p:DeployAddin=false "-p:RevitDir=%API%\\" >> "%LOG%" 2>&1
+  if errorlevel 1 exit /b 1
   if exist "plugin\bin\%Y%\RevitMcpBridge.dll" (
     mkdir "%DEST%\RevitMcpBridge" 2>nul
-    copy /y "plugin\bin\%Y%\RevitMcpBridge.dll" "%DEST%\RevitMcpBridge\" >> "%LOG%" 2>&1
-    copy /y "plugin\RevitMcpBridge.addin" "%DEST%\" >> "%LOG%" 2>&1
+    copy /y "plugin\bin\%Y%\RevitMcpBridge.dll" "%DEST%\RevitMcpBridge\" >> "%LOG%" 2>&1 || exit /b 1
+    copy /y "plugin\RevitMcpBridge.addin" "%DEST%\" >> "%LOG%" 2>&1 || exit /b 1
     if exist "plugin\prebuilt\%Y%" rmdir /s /q "plugin\prebuilt\%Y%"
     mkdir "plugin\prebuilt\%Y%" 2>nul
-    copy /y "plugin\bin\%Y%\RevitMcpBridge.dll" "plugin\prebuilt\%Y%\" >> "%LOG%" 2>&1
+    copy /y "plugin\bin\%Y%\RevitMcpBridge.dll" "plugin\prebuilt\%Y%\" >> "%LOG%" 2>&1 || exit /b 1
     echo RELEASE %Y%: built here against %API% >> "%LOG%"
     set /a FOUND+=1
-    goto :eof
+    exit /b 0
   )
   echo RELEASE %Y%: build FAILED, see above >> "%LOG%"
+  exit /b 1
 )
 if exist "plugin\prebuilt\%Y%\RevitMcpBridge.dll" (
   mkdir "%DEST%\RevitMcpBridge" 2>nul
-  copy /y "plugin\prebuilt\%Y%\RevitMcpBridge.dll" "%DEST%\RevitMcpBridge\" >> "%LOG%" 2>&1
-  copy /y "plugin\RevitMcpBridge.addin" "%DEST%\" >> "%LOG%" 2>&1
+  copy /y "plugin\prebuilt\%Y%\RevitMcpBridge.dll" "%DEST%\RevitMcpBridge\" >> "%LOG%" 2>&1 || exit /b 1
+  copy /y "plugin\RevitMcpBridge.addin" "%DEST%\" >> "%LOG%" 2>&1 || exit /b 1
   echo RELEASE %Y%: NOT built here, using plugin\prebuilt\%Y% - check it is from this version >> "%LOG%"
   set /a FOUND+=1
-  goto :eof
+  exit /b 0
 )
 echo RELEASE %Y%: MISSING - no Revit %Y% API found and no prebuilt DLL >> "%LOG%"
 set "MISSING=%MISSING% %Y%"
-goto :eof
+exit /b 0

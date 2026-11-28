@@ -120,6 +120,8 @@ internal static class CadPairs
     // ---------------------------------------------------------------- closed outlines
 
     /// <summary>Closed loops: closed polylines, circles, and chains of lines / arcs / open polylines that meet end to end.</summary>
+    private const int MaxPairs = 2_000_000;
+
     public static List<List<XYZ>> Loops(List<Cad.Item> items, double tol)
     {
         var loops = new List<List<XYZ>>();
@@ -147,7 +149,12 @@ internal static class CadPairs
                 XYZ pa = End(byX[x]), pb = End(byX[y]);
                 if (pb.X - pa.X > tol) break;
                 double d = pa.DistanceTo(pb);
-                if (d <= tol && (byX[x] >> 1 != byX[y] >> 1 || open[byX[x] >> 1].Count > 2)) pairs.Add((byX[x], byX[y], d));
+                if (d <= tol && (byX[x] >> 1 != byX[y] >> 1 || open[byX[x] >> 1].Count > 2))
+                {
+                    pairs.Add((byX[x], byX[y], d));
+                    if (pairs.Count > MaxPairs)
+                        throw new ArgumentException($"More than {MaxPairs:N0} possible end-to-end joins within the gap; reduce 'gap' or narrow the layer.");
+                }
             }
         var link = Enumerable.Repeat(-1, 2 * n).ToArray();
         foreach (var (a, b, d) in pairs.OrderBy(q => q.d))

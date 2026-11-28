@@ -1,5 +1,361 @@
 # Changelog
 
+## 0.29.0 - 2026-11-28
+
+Roadmap phase 18 (MEP and HVAC) completed: sleeves, plumbing and fire fighting, electrical, cable trays and conduits,
+MEP quantities to Excel. Tested live on the detached FF, PL and E copies (nothing saved); Task 04 untouched.
+
+- New edit sleeve_place: sleeves of the engineer's family type where runs cross walls / slabs / beams (host or link),
+  centred on the crossing (wall centre plane, slab mid-depth), turned so the family's own axis (x, y or z) follows the run,
+  with the parameter values given; a value can be a length measured at the crossing (crossing_length, run_outside_diameter,
+  run_diameter, run_width, run_height) plus or minus the engineer's clearance. A level-based family that would have to tilt
+  is refused with the way out.
+- New edit mep_fixture_place: plumbing fixtures, sprinklers, electrical / lighting / fire alarm / data / security /
+  communication devices and plumbing or mechanical equipment at the engineer's points: on the level, on a plane at height
+  facing down (ceiling sprinklers, downlights) or up (floor drains), or on the nearer side face of a wall (host or link);
+  optional rotation, parameter values and a connection of each one to a main (later points use the piece a tee left).
+- mep_route: slope (percent, the engineer's) for sanitary and drainage runs; starts on a cable tray / conduit connector
+  too. mep_route to_main and mep_connect: tees into cable trays and conduits (split by a copy; Revit has no BreakCurve for
+  them).
+- New read electrical_circuits: panels (distribution system, mains, connected / demand load and current, circuits) and
+  circuits (number, panel, kind, load name, poles, voltage, loads, current, rating, wire, length) as Revit computes them, and
+  the loads on no circuit.
+- New edits electrical_circuit_create (circuits from the engineer's list: loads, panel, kind, load name, rating),
+  electrical_circuit_edit (add / remove loads, panel on / off, load name, rating) and electrical_panel_set (distribution
+  system, panel name). Nothing is grouped, balanced or sized.
+- New server action mep_report: MEP quantities workbook (.xlsx) - runs by system, size, type and level with duct surface,
+  fittings / accessories / terminals / equipment / fixtures by type, insulation totals and the elements without, panels and
+  circuits, loads on no circuit; totals are Excel formulas.
+- Fixed: mep_insulation (and mep_report) failed on pipes: Revit answers lining only for the duct side.
+
+## 0.28.0 - 2026-11-28
+
+Roadmap phase 18 (MEP and HVAC), fourth part: duct and pipe accessories, insulation and lining. Tested live on the
+detached HVAC copy (nothing saved); Task 04 untouched.
+
+- New edit mep_accessory_place: dampers, fire dampers and valves of the type the engineer gives, inserted in existing
+  straight ducts / pipes at a point on the run ([x, y] matched in plan) or where the run crosses a given wall (its centre
+  plane, so an opening already cut there does not matter), slab (mid-depth) or other element, in the host or a link
+  (crossing_link: the fire damper at a fire wall of the architectural model). The run is split, the accessory lined up with
+  it (rectangular ones turned to the run's width), sized to the run through the family parameters its connectors are tied
+  to, and both pieces trimmed to it and connected. A size driven by a type parameter is left alone and reported (the
+  engineer picks the type for that size). Several items, or later calls, on one run follow the pieces it was split into.
+  Revit's API places an accessory on a duct host without breaking the run, so the bridge does the split itself.
+- New edits mep_insulation_add / mep_insulation_remove: duct / pipe insulation and duct lining of the engineer's type and
+  thickness (no defaults) on ducts, pipes, their fittings and accessories, or on a whole system's network (equipment and
+  terminals in it are left out); existing insulation is listed, or changed with replace.
+- New read mep_insulation: insulation and lining per element (type, thickness), totals by type and thickness with run
+  length, elements with neither (missing_only), host or link.
+
+## 0.27.0 - 2026-11-28
+
+Roadmap phase 18 (MEP and HVAC), third part: connectors, runs from equipment and terminals, quantities, schedules.
+Tested on the detached HVAC copy (nothing saved).
+
+- New read mep_connectors: every connector of the elements given (or of a category): domain, shape, size, classification,
+  flow direction, flow, system, what it is connected to, origin, facing, and the width / height axes of rectangular ones.
+- mep_route can start on an equipment or terminal connector (from: {element, classification?, stub?}): the first segment
+  is drawn from the connector itself, so it takes the connector's size and orientation and is connected; a first point
+  within 2 degrees of the connector's axis is snapped onto it. It can end on a main (to_main) with a tap or tee. Sizes are
+  refused with from (the run takes the connector's size).
+- mep_route: when an elbow between two rectangular segments fails, the next segment's width and height are swapped once
+  and the elbow tried again.
+- mep_connect: classification picks which open connector (e.g. SupplyAir or ReturnAir on a unit with both).
+- mep_quantities: duct surface area (m2) per group.
+- Client setup checked against the CSI (ETABS / SAP2000) installers and OpenAI's current MCP page: the same three Claude
+  Desktop files (incl. 6.x Claude-Data) and Codex (CODEX_HOME). The ChatGPT desktop app shares Codex's
+  ~/.codex/config.toml, so the installer's entry serves it too (no separate step). That entry now sets
+  startup_timeout_sec = 30 and tool_timeout_sec = 3600 (Codex / ChatGPT stop a tool call after 60 s by default). An
+  existing Claude "revit" entry keeps its other settings (env), old python + server.py arguments are dropped; backups get
+  unique names. The hand-copy Codex snippet carries the full entry.
+- MEP schedules: schedule_create tested on air terminals (Family and Type, System Classification, Flow) and ducts
+  (System Type, Size, Length).
+
+## 0.26.5 - 2026-11-27
+
+Installation fixed for Claude Desktop 6.x (compared with the working SAP2000 MCP package).
+
+- install.bat (revit-mcp-server.exe --configure-clients) now also writes the "revit" entry to
+  %LOCALAPPDATA%\Claude-Data\claude_*\claude_desktop_config.json, the file Claude Desktop 6.x reads. Before, only
+  %APPDATA%\Claude and the Microsoft Store copy were written, so Claude Desktop 6.x never saw the server although the
+  install log said "already configured". Its other settings and servers (sap2000, etabs, civil3d ...) are kept.
+- Codex: %CODEX_HOME% is honoured; the new config.toml is checked as TOML (and for the revit entry) before it replaces the
+  old one; an unchanged entry is reported as "already configured" instead of being rewritten.
+- uninstall.bat removes the entry from the same files (the PowerShell fallback too).
+- claude_config_snippet.json / codex_config_snippet.toml point to the installed server exe instead of the development
+  Python environment.
+
+## 0.26.5 (code audit fixes, made in the 'MCP implementation code audit' chat) - 2026-11-27
+
+Fixes for the 0.26.4 code and protocol audit (two High, six Medium, ten Low findings). Python side tested with the smoke
+test and raw stdio probes; the add-in compiles for Revit 2024 and 2027 and its bridge code was run against the Python
+client outside Revit. NOT yet run inside Revit: build both add-ins and run the live suites before release.
+
+- Lost replies: an edit whose MCP request was cancelled or timed out still finishes in Revit, and its generated
+  operation_id never reached the caller. The server now keeps a journal of the writes it dispatched;
+  get_operation_status without an operation_id lists them (applied, replyDelivered). Long calls send progress
+  notifications when the client asks for them (progressToken).
+- Central model: sync_with_central and relinquish need the user's Yes in a Revit dialog every time (one approval, one
+  action, valid 5 minutes), not only confirm: true. tests/live_ws.py needs a click per sync.
+- Bridge: one failed accept no longer ends the listener for the session (retry with back-off; a fatal error stops the
+  bridge cleanly and removes the session file). A request over 4 MB is refused by the server before sending, instead of
+  surfacing as "outcome unknown". The reply envelope carries the request keys no handler read ("unread").
+- ignoredParams: an option the add-in never read and the catalogue does not list for that action or operation is
+  reported in the result (a misspelling used to be ignored silently).
+- Tool description: REVIT_MCP_DESCRIPTION=compact lists names and parameter names only (about 20,000 characters
+  instead of 49,000); the full description stays the default (Mohamed, 28 Nov). help takes a name, a list of names or a
+  group title.
+- Paths: family_load, cad_link, revit_link, link_reload and shared_file must be full paths, like the output paths.
+  Optional %LOCALAPPDATA%\RevitMcpBridge\allowed_roots.txt limits every path to the listed folders (add-in and
+  workbooks). Device paths are refused.
+- batch_read: max_seconds must be 1 to 3000 and the server waits the budget plus 300 s.
+- worksharing_status, sync and relinquish: the "elements held" scan stops after 5 s (scanComplete, elementsScanned).
+- Numbers and lists: a fractional value for a whole-number parameter is refused (it was rounded); a list of names
+  refuses objects and nulls. Values above a documented maximum are still brought down to it.
+- Receipts: at 65,536 reserved operation ids the oldest expired one is released instead of asking for a Revit restart.
+- parameter_add warns that a definition written to the shared parameter file stays there if the batch rolls back.
+- A dry run reports applied: true if Revit did not confirm the roll-back of its trial commit.
+- Scratch projects are deleted on model_close and after 7 days untouched.
+- Sessions of a Revit that crashed are skipped without probing their port.
+- serverInfo.version is the server's version; the Codex config rewrite is atomic, idempotent and recognises
+  [mcp_servers."revit"]; requirements are pinned and no longer pull the mcp CLI extra (recreate server\.venv to drop
+  typer and rich from the exe).
+
+## 0.26.4 - 2026-11-26
+
+ChatGPT's 0.26.3 audit fixes (docs/0.26.3-AUDIT-CHANGES.md), reviewed, merged and tested live, plus one open item fixed.
+
+- Documents: model_close only closes the very document Claude opened (a manual close and reopen of the same file no longer
+  inherits the permission); Revit's close result is checked; model_open with activate on a model already open in the
+  background activates it; scratch projects get a unique name and are never overwritten; batch_read refuses
+  model_open / model_new / model_close as nested actions, rejects a non-positive max_seconds, always reads at least one
+  file, deduplicates paths, refuses an ambiguous resume_after and reports background close failures in closeErrors.
+- join_overlaps retries only after a confirmed rollback of a batch that holds nothing but join_overlaps.
+- spaces_from_rooms: the duplicate check looks at spaces of the target phase, including the ones made in the same call;
+  max now counts new spaces after the level filter, rooms are taken in a stable order (level, number) and a stop at max is
+  reported (truncated).
+- Server: split mode (revit_read / revit_edit) can run the four worksharing actions (worksharing_action and
+  worksharing_params), and their failures are reported like edit failures.
+- Tests: the HVAC tests pin their edits and the close to the HVAC copy they opened and exit non-zero on failure;
+  exe_check no longer sends a real purge in its malformed-request probe.
+
+## 0.26.3 - 2026-11-26
+
+Roadmap phase 18 (MEP and HVAC), second part: spaces, zones, design airflow, air terminals, system membership. Tested on
+the detached HVAC copy with the detached architecture model linked into it (nothing saved).
+
+- spaces_from_rooms: one MEP space for every placed room of a linked architectural model, on the host level at the same
+  elevation, with the room's name, number and height; the link type is made room-bounding; rooms that already have a
+  space (found at the room point, or by number and name on that level) are skipped.
+- space_airflow_set: spaces' design supply / return / exhaust airflow, as the engineer gives them (L/s).
+- hvac_zone_create: an HVAC zone of given spaces on one level (Revit 2024; Revit 2027 replaced zones with system zones,
+  so it refuses there for now).
+- air_terminal_place: terminals of a given type at points and a height, with the given flows (L/s), optionally each
+  connected to a main duct above (branch + tap / tee as mep_connect, following the main's pieces after a split). The
+  flow is written to the parameter that drives the connector ("Flow") and checked; face-based types are hosted on a
+  downward-facing reference plane. Each terminal joins the main's system before it is connected, so Revit does not make
+  a new default system for it.
+- mep_system_add / mep_system_remove: add elements' matching free connectors to an existing system; remove members
+  (refused when it would empty the system, or for the base equipment, or for elements not in it).
+- mep_connect is unchanged for callers (its core is shared with air_terminal_place).
+
+## 0.25.4 - 2026-11-26
+
+Roadmap phase 18 (MEP and HVAC), first part, tested on detached HVAC and plumbing copies (edits never saved).
+
+- New reads: mep_flow (Revit's computed flow, velocity, friction and pressure drop per duct or pipe, totals per system;
+  max_velocity / max_friction given by the engineer list the runs over them), mep_connectivity (open duct / pipe ends
+  and equipment or terminal connectors in no system), air_terminals (flow and system per terminal, the MEP space it is
+  in, and per space the terminals' supply total vs the space's design supply airflow).
+- batch_read takes `actions`: up to 20 read actions run on each file while it is open.
+- New edit operations: mep_route (a connected duct / pipe run along given points, elbows from the routing preferences;
+  points in a line or turning back are refused), mep_connect (a branch from a terminal / equipment / run connector to a
+  main: a tap, or a tee by splitting the main when the routing preferences have no tap; refused when the connector's
+  line misses the main), mep_system_create (duct or piping system from the free connectors of given elements; the
+  system type is given or found from the connectors' classification; connectors of other classifications are left out
+  and listed; the base equipment's connector is the system's source, not a member, so a system needs one more element).
+
+## 0.24.1 - 2026-11-26
+
+Roadmap phase 16, first part: models as documents. Nothing here saves a model the user works on.
+
+- list_documents: open models with their documentId, active, path, workshared, cloud, unsaved, opened by Claude.
+- Reads take document_id of ANY open model (not only the active one) and read it without activating it. Reads that need
+  the view or the selection refuse a background model; edits still need the active model.
+- model_files: Revit version, workshared / central / local, central path, saved by, size and date of the .rvt files in a
+  folder, without opening them (backups skipped).
+- model_open: in the background or active; workshared files ALWAYS detached from their central (worksets kept or
+  discarded); a file already open is reused. model_close: only models Claude opened, never the active one, never saved.
+- model_new: a project from a template, in memory (read by document_id) or active (saved once as a scratch file under
+  %TEMP%\RevitMcpScratch, since Revit can only activate a document with a path).
+- batch_read: one read action over many files: each opened in the background, read, closed without saving; per-file
+  result or error; max_files, max_seconds and resume_after.
+
+## 0.23.1 - 2026-11-26
+
+Roadmap phase 12 (worksharing), tested on a cloud (Autodesk Docs) test model.
+
+- New actions, each its own request (never an edit operation, no dry run), behind the edit permission, with a
+  document_id check and an operation_id receipt like edit: sync_with_central (comment, relinquish all / borrowed / none,
+  compact, save local; needs confirm: true), reload_latest, relinquish (all / borrowed / worksets; needs confirm: true),
+  checkout (elements and / or worksets). New read: worksharing_status (central path, cloud, user, elements and worksets
+  held; per element checkout, owner, creator, last changed by, workset, model-updates status).
+- Cloud models always save the local cache before and after a sync (Revit requires it; 0.23.0 skipped it and the sync
+  was refused).
+- Write actions other than edit mark their receipt as running only after their own checks, so a refused request
+  (missing confirm, unknown workset) is a plain error, not "outcome unknown".
+
+## 0.22.2 - 2026-11-26
+
+- join_overlaps on real models: when Revit refuses a join at commit ("can't cut joined element"), the batch is run again
+  (up to 3 times) without joining the elements Revit named, instead of the whole batch being rolled back. The pairs left
+  out are listed in skippedCutConflict and a warning names the elements. Existing joins are never undone. Revit reports
+  this failure with one element and under more than one failure definition, so the match is by element, not by message
+  (0.22.1 matched one definition and did not trigger live; 0.22.2 fixes that).
+- Dry runs of join_overlaps on workshared models warn that commit-time join failures show only on a real run (these
+  dry runs do not commit on trial).
+
+## 0.22.0 - 2026-11-26
+
+Edit features of roadmap phases 10, 11 and 13. All values come from the engineer: nothing is sized or derived.
+
+- crossing_opening: an opening in a host wall, slab, roof, ceiling, beam or brace where a duct, pipe, tray or conduit (host
+  or link) passes through it: the run's cross-section plus the clearance given on each side, square to the face (walls
+  rectangular, slabs and beams round or rectangular like the run). Refused when the run is more than 15 degrees off
+  square or no longer passes through (an opening already clears it). Structure inside links cannot be cut.
+- mep_run_create: straight ducts, pipes, cable trays and conduits between points with the type, system and size given
+  (no fittings).
+- room_create, room_separation: rooms or MEP spaces at points with names and numbers, or a room in every enclosed region
+  that has none; room / space separation lines.
+- analytical_member_create, analytical_panel_create: analytical members and panels, optionally associated with their
+  physical element.
+- load_case_create, load_combination_create, load_place: load cases; combinations from the factors given; point, line
+  and area loads (kN, kN/m, kN/m2) on analytical members and panels, or on a physical element through its analytical one.
+- list_spaces and room_create report the room name without the number (Revit's Room.Name joins both).
+
+## 0.21.0 - 2026-11-25
+
+Read features of roadmap phases 15 (P1), 13, 11, 10 and 14, built to work across linked models (a federated model
+with architecture, MEP and structure links). Reads only; their edit counterparts come later.
+
+- ray_cast: what lies above, below or beside a point or an element (host or link), through a 3D view and into links;
+  hits nearest first with distance and point.
+- clearances: clear distance from each element of a category (host or link) to the first element below / above;
+  target categories, threshold (less_than), time limit with resume.
+- mep_crossings: ducts, pipes, cable trays and conduits passing through beams, walls, slabs, columns and foundations,
+  MEP and structure each in the host or a link: point, entry / exit, length inside, size, system, structural element.
+- mep_systems, mep_quantities: systems (type, classification, members, base equipment, well connected); run lengths by
+  size / type / system / level and counts of fittings, accessories, terminals, equipment and fixtures.
+- list_spaces: rooms, areas or spaces with area, perimeter, volume, unplaced / not-enclosed status, totals by level.
+- analytical_model, list_loads, steel_connections: analytical members and panels (role, section, releases, associated
+  physical element), boundary conditions; load cases, combinations and loads in kN / kN/m / kN/m2; connections.
+
+## 0.20.0 - 2026-11-25
+
+Roadmap phase 7, second part: numbering, rebar containers, Revit 2027 splices. First live runs in Revit 2027.
+
+- list_numbering (read): Revit's rebar, fabric and coupler numbering: each partition's numbers in use (ranges), count
+  and gaps. Schemas are recognised by the parameter they number (Revit 2024 names every schema "NumberingSchema").
+- rebar_numbering: remove gaps, shift a partition to start at a number, or change one number (calls kept in both
+  Revit 2024 and 2027). Bars move to another partition with set_parameters (bip:NUMBER_PARTITION_PARAM).
+- splice_type_create (Revit 2027): a splice type with the engineer's lap (and stagger) in bar diameters.
+- rebar_splice (Revit 2027): splice bar sets by rules (max / min bar length, run-out) or at a line in a view; the
+  result lists the new bar sets and their lengths. Refused in Revit 2024 with a clear message.
+- list_reinforcement_types: Revit 2027 splice and crank types.
+- rebar_list: rebar container items (one row per item).
+- A missing required choice (e.g. 'action', 'kind') is reported as required instead of a null-reference error
+  (built and compiled; live check with the next build).
+
+## 0.19.0 - 2026-11-25
+
+Roadmap phase 7 (reinforcement completion), first part. No design: bars, spacings, lengths, laps, hooks and cover are
+the engineer's values or the model's own types; nothing is chosen by rule.
+
+- path_reinforcement: bars perpendicular to a sketched path in a wall or slab (bar, spacing, length, face, flip,
+  alternating bars, hooks, extra cover). Bars that leave the host are flagged (`barsBeyondHost`, with a hint to flip).
+- fabric_area: welded mesh over a slab or wall (the whole host or a boundary), sheet type, location, cover and laps.
+  Laps and cover are set after Revit lays out the sheets and read back: a value Revit does not keep is an error.
+- fabric_sheet_place: one sheet at a point, rotated in the host plane; a sheet outside its host is refused with its size.
+- Fabric sheet types without wire types are refused (they make sheets of 0 kg), and 'default' is refused in a model
+  without fabric wire types.
+- rebar_hooks: hooks of the model's hook types at the start / end of bar sets, with orientation and rotation; checks that
+  the bar type permits the hook and the bar's style / shape can take it (Revit 2024 / 2027 API differences handled).
+- coupler_place: a coupler of a given type on one or two bar ends; Revit's refusal reason is explained.
+- rebar_annotate: multi-reference annotation (dimension across the bars plus tag) in a section, plan or elevation; the
+  dimension runs along the set's distribution direction; a set laid out along the view is refused clearly; an
+  annotation type without a tag type is reported.
+- list_reinforcement_types (read): bar types (hooks allowed, 2027 mass), hook, path / area / fabric area types, fabric
+  sheet and wire types, coupler and rebar annotation types.
+- rebar_list: `systemKind` (area / path) for system bars, fabric sheets (cut size, kg) and couplers.
+
+Not in this release: rebar in sloped / curved / irregular members, Revit 2027 splices, cranks and numbering schemas.
+
+## 0.18.1 - 2026-11-25
+
+API alignment audit of everything built so far (docs/API_ALIGNMENT_AUDIT.md). Every Revit API member the 2024 and 2027
+add-ins reference (362 / 359 types, about 985 members, read from the compiled assemblies) exists and is not obsolete in
+its Revit version. Fixes:
+
+- Units: every spec with a length dimension follows the request `units`, not only `SpecTypeId.Length` (bar diameter,
+  rebar cover / spacing / length, section dimensions, displacement ...); the same for area, volume and angle specs.
+  Applies to reported values and to numbers given to set_parameters, filters, schedule filters and global parameters.
+  parameterDetails name the unit of every measured value.
+- Dry runs on models that are not workshared commit inside a transaction group that is rolled back, so they report the
+  errors and warnings Revit raises only at commit (`trialCommit`, `revitErrors`, `revitWarnings`).
+- rebar_list: in Revit 2027 the weight is Revit's own rebar mass (`weightSource: "model"`); Revit 2024 keeps d^2/162.2.
+- Overlap volumes: a solid pair Revit cannot intersect no longer blanks the volume of the other pairs.
+
+## 0.18.0 - 2026-11-25
+
+Roadmap phase 6 completed (coordination and links). Reads only measure; nothing is moved or fixed for you.
+
+- get_coordinates: internal origin, project base point and survey point (internal and shared positions, clipped),
+  the active site location (angle to true north, east/west, north/south, elevation), all named locations, the site
+  (place, latitude / longitude, time zone, GIS coordinate system) and a self-check of the shared transform. With
+  `link=` it says whether a linked model sits where its own shared coordinates say (offset, rotation).
+- list_annotations: dimension values per segment (shown text, value, override, prefix / suffix), spot dimensions, tag
+  text and tagged element, text notes, in a view, a sheet or the whole model; flags overridden text, zero values,
+  dimensions without references, orphaned tags and empty text (`only_issues`).
+- link_clashes: hard clashes between host elements and a linked Revit or IFC model (solids intersected, volume and a
+  point in host coordinates, grouped by category pair); category filters, minimum volume, time limit with resume.
+- Edits link_reload (from the same or another file), link_unload (for everyone or only me in a workshared model;
+  moved shared positions are not saved back to the link) and link_set (pin, overlay / attachment, relative /
+  absolute path) for Revit links; reload and pin for CAD links. Reload and unload run after the commit; dry runs only
+  check.
+- list_links reports `fromIfc` for links created from IFC files.
+
+## 0.17.1 - 2026-11-25
+
+Protocol and robustness audit (done in a separate ChatGPT session, reviewed and corrected here). No new actions; full
+record in `docs/0.17.0-AUDIT-CHANGES.md` and `docs/PROTOCOL_AUDIT.md`.
+
+- Stricter input: unknown or misspelled tool / edit arguments (e.g. `dryRun`), `dry_run` that is null or inside an
+  operation, unknown or null purge options, fractional pids and duplicate Excel headers are refused instead of ignored
+  (checked in the server and again in the add-in). An edit batch is limited to 500 operations; 240 tool calls per minute.
+- Failed edits (rollback, failed dry run, Excel conflicts) are now MCP tool errors carrying the full result and receipt.
+  When the edit was committed and only a later save / export failed, the error says so and not to resend the edit.
+- Edit receipts: an exception after the transaction starts is reported as `outcome_unknown` and that operation_id is
+  never run again; a refused permission or a check that fails before the transaction (busy Revit, family document,
+  wrong model, bad units) can be retried with the same operation_id.
+- The server runs each call in a worker thread (stays responsive during long edits) and stops a cancelled workflow
+  before its next bridge call or workbook save. Reply reading has an overall deadline, a 128 MB cap and envelope checks.
+- select_revit binds to the session's connection (a recycled pid cannot redirect calls); a busy Revit is listed as busy,
+  not unreachable; a corrupt bridge.json no longer hides an open Revit.
+- Add-in: the default-Revit hand-over is serialised across Revit processes (a lock that times out no longer stops the
+  bridge); stricter JSON parsing; incomplete request lines are not run; write timeout; failed start-up cleans up.
+- Integer values (global parameters, schedule filters) must be whole numbers; geometry boxes use all eight corners and
+  total volume is summed before rounding; geometry traversal is bounded; list_groups / list_assemblies index once.
+- CAD outlines: limits on grid size and joins instead of running out of memory; build_package.bat stops when a
+  compile or copy fails. MCP SDK pinned to 1.30.0.
+- Installer: the server exe writes the MCP client settings itself (`--configure-clients` / `--remove-clients`)
+  instead of a PowerShell script, which company script policies could block, leaving Claude Desktop without the
+  "revit" entry and no message. It also writes the file when Claude Desktop is installed but was never started (the
+  script skipped it), reads it back to confirm, leaves a broken JSON file untouched, and every result goes to the
+  window and install_result.txt. install.bat now stops while Claude is running (it can write its settings back over
+  the entry); `/claude_open` overrides.
+- Review fixes on the audit: the receipt is marked running by the edit engine just before the transaction (the audit
+  marked it before the checks, so "Revit is busy" would have read as an unknown outcome); the post-commit message above.
+
 ## 0.17.0 - 2026-11-24
 
 Roadmap phases 8 (modify and documentation depth) and 9 (standards and data). No design: every value placed is given.

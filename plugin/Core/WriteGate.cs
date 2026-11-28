@@ -14,6 +14,11 @@ internal static class WriteGate
     private static string _grantedBy = "";
     private static DateTime _declinedUtc = DateTime.MinValue;
 
+    // One approval in Revit for one action on the central model (sync, relinquish): usable once, for a short time.
+    private static readonly TimeSpan CentralApprovalLifetime = TimeSpan.FromMinutes(5);
+    private static string _centralApproval;
+    private static DateTime _centralApprovalUtc;
+
     public static bool Granted => _granted;
 
     public static object Status() => new
@@ -38,6 +43,7 @@ internal static class WriteGate
     {
         if (_granted) Audit.Write("permission_revoked", new { by });
         _granted = false;
+        _centralApproval = null;
     }
 
     private static volatile bool _asking;
@@ -67,6 +73,64 @@ internal static class WriteGate
         catch { _asking = false; throw; }
         return "Revit is now asking the user to allow editing (dialog 'Claude - allow editing in Revit?'). Nothing was changed. " +
                "Ask the user to click Yes there, check with get_edit_permission, then send the edit again (as a new request: no operation_id, or a new one).";
+    }
+
+    /// <summary>
+    /// Actions that change the CENTRAL model for everyone and cannot be undone need the user's Yes in Revit every
+    /// time, not only the session permission and a confirm flag the caller sets itself. Works like Ensure: the
+    /// request returns at once while the dialog is open; after Yes the same action on the same model passes once.
+    /// </summary>
+    public static string EnsureCentral(Document doc, string action)
+    {
+        if (Ensure(doc, action) is string denied) return denied;
+        string wanted = action + "|" + doc.Title;
+        if (_centralApproval == wanted && DateTime.UtcNow - _centralApprovalUtc < CentralApprovalLifetime)
+        {
+            _centralApproval = null;
+            return null;
+        }
+        if (_asking) return "A permission dialog is open in Revit. Answer it there; after Yes, send the request again (as a new request).";
+        if (DateTime.UtcNow - _declinedUtc < DeclineCooldown)
+            return "This was declined in Revit a moment ago. Ask the user before trying again.";
+
+        _asking = true;
+        string title = doc.Title;
+        try
+        {
+            MainThread.Post(app =>
+            {
+                try { AskCentral(title, action, wanted); }
+                finally { _asking = false; }
+            });
+        }
+        catch { _asking = false; throw; }
+        return "Revit is now asking the user to approve this change to the central model (dialog 'Claude - change the central model?'). " +
+               "Nothing was changed. Ask the user to click Yes there, then send the same request again within 5 minutes (as a new request: no operation_id, or a new one).";
+    }
+
+    private static void AskCentral(string model, string action, string wanted)
+    {
+        var dialog = new TaskDialog("Claude - change the central model?")
+        {
+            MainInstruction = "Claude is asking to " + action + " (model " + model + ").",
+            MainContent =
+                "This reaches the central model that other people work in and cannot be undone.\n\n" +
+                "Yes = allow this one action. You are asked again next time.\n" +
+                "No = nothing is changed.",
+            CommonButtons = TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No,
+            DefaultButton = TaskDialogResult.No,
+        };
+        if (dialog.Show() == TaskDialogResult.Yes)
+        {
+            _centralApproval = wanted;
+            _centralApprovalUtc = DateTime.UtcNow;
+            Audit.Write("central_action_approved", new { model, action });
+        }
+        else
+        {
+            _declinedUtc = DateTime.UtcNow;
+            Audit.Write("central_action_declined", new { model, action });
+        }
     }
 
     private static void Ask(string model, string firstRequestSummary)

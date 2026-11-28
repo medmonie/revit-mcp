@@ -1,5 +1,369 @@
 # Revit MCP implementation log
 
+## 2026-11-28 · Version 0.29.0 (phase 18 completed: sleeves, plumbing / fire fighting, electrical, trays, report)
+
+New: Edit/FixtureOps.cs (mep_fixture_place), Edit/ElectricalOps.cs (electrical_circuit_create / edit, electrical_panel_set),
+Read/ElectricalRead.cs (electrical_circuits), AccessoryOps.SleevePlace (sleeve_place), MepOps: route slope, routes from tray /
+conduit connectors, tray / conduit tees (SplitRun by copy), DownPlane facing up; server/mep_report.py (mep_report, added to
+the PyInstaller hidden imports). 72 reads, 156 edit operations. Both years 0 / 0, smoke test ALL OK (new mep_report checks
+against the fake bridge), build_package RESULT=OK three times, add-ins installed for 2024 and 2027 (server exe locked by
+Claude Desktop: known limitation). Mohamed declined folder access to C:\ProgramData\Autodesk\RVT 2024, so the tests use the
+families in the detached KTR15 copies; found with model_files, model_open in the background, count_by_category, list_types,
+family_inspect. Test: tests/live_mep5.py (`run_live_mep5.bat`): FF, PL and E copies opened active one after the other and
+closed without saving; workbooks tests\results\mep_report_live_PL.xlsx and _E.xlsx.
+
+| Run | Result |
+| --- | --- |
+| 1 | Most passed. Bugs: mep_insulation called GetLiningIds on pipes (Revit: "not a duct, fitting or accessory"), which broke the PL workbook; circuit membership was read from connectors' MEPSystem, but electrical circuits sit on MEPModel.GetElectricalSystems(), so "already on a circuit" fell through to Revit's own error and the test loads were listed as on no circuit. Test: the sprinkler main used a pipe type without a takeoff or 50 x 15 tee; the OD + 50 expectation was off by one (OD = nominal here); the linked-wall socket needed the wall's own height |
+| 2 | Fixed (lining only on the duct side, wrapped; CircuitsOf via GetElectricalSystems; the panel is resolved before the circuit is made). All checks passed except the sprinkler joint: KTR15-M-PITY-Steel Black, Galvanized Steel and Chilled Water have no takeoff and no 50 x 15 tee in their routing preferences (reported, rolled back) |
+| 3 | ALL CHECKS AS EXPECTED. FF: two pendent sprinklers on a downward plane at 2.8 m, each teed into a 50 mm main (pipe type Standard); refusals (not under the main, wrong category, walls that are not walls). PL: floor drains on an upward plane (work-plane-based, rotated, comment set); a 100 mm run at 2 % falling exactly 100 / 60 mm with its elbow; sleeves (coupling as stand-in) at two test walls (centre plane, 90 degree turn, 460 mm crossing length, measured diameter, OD + 50) and at a slab (mid-depth; axis x on the vertical pipe refused: would tilt); refusals. E: 10 panels, 58 circuits read; sockets on a test wall's face and on a wall of the linked architecture model; ceiling lights; circuits on DB-B-GP with 20 A / 10 A and load names; edit (remove, add, rename, 16 A, off and back on the panel); refusals (no connector, already on a circuit, unknown panel, empty circuit, nothing to change, unknown distribution system); panel renamed; tray and conduit runs with elbows and teed branches; workbooks with runs, counts, insulation, panels, circuits |
+| Regression | live_hvac4 and live_hvac3 on 0.29.0: ALL CHECKS AS EXPECTED. Task 04: no unsaved changes, 27 / 64 / 21 / 7 / 33 / 273 / 8 / 4 |
+
+## 2026-11-28 · Version 0.28.0 (phase 18 fourth part: accessories, insulation and lining)
+
+New: Edit/AccessoryOps.cs (mep_accessory_place, mep_insulation_add, mep_insulation_remove), HvacRead.MepInsulation
+(mep_insulation). 71 reads, 151 edit operations. Before any change: both years rebuilt in the cloud (0 / 0) and smoke test
+ALL OK on 0.27.0. After: compiled 0 / 0 for 2024 and 2027, smoke test ALL OK, build_package RESULT=OK twice, add-ins
+installed for 2024 and 2027 (the server exe copy failed: Claude Desktop had it open, the known limitation; the tests talk
+straight to the add-in). Test: tests/live_hvac4.py (`run_live_hvac4.bat`) in the detached HV copy, closed without saving.
+
+| Run | Result |
+| --- | --- |
+| 1 | Revit's host-based NewFamilyInstance on a duct places the damper but does not break or connect the run, so the split / place / trim / connect path ran: dampers connected on both sides, but they kept the family's 300x300 on a 600x300 duct. A second call on the split run found only the original piece ("beyond the ends" instead of "off the centreline"). System insulation was refused because the network holds the AHU. The arch link only places origin to origin here and crossed no duct |
+| 2 | Fixes: the accessory is sized through MEPFamilyConnectorInfo.GetAssociateFamilyParameterId (instance parameters only; a type-driven size is reported), rectangular ones are turned about the run axis to the run's width; a run id follows its in-line chain through earlier accessories; a system's network is filtered to ducts, pipes, fittings and accessories; the test draws its own duct through a linked wall. ALL CHECKS AS EXPECTED, nothing skipped: two volume dampers 600x300 on one test duct (pieces followed), refusals (off the centreline, beyond the ends of the run and its 2 pieces, neither point nor crossing, no type, a pipe accessory type on a duct, a wall the duct does not cross), fire damper at a host wall's centre plane (600x300, connected), fire damper where a test duct crosses a wall of the linked architecture model (0.0 mm from the wall's location line; mep_crossings finds the same crossing), balancing valve on a 100 mm test pipe (connected; its DN 125 type keeps its size: "Connection Radius" is a type parameter, reported), insulation 25 then replace 50 then remove, refusals (no thickness, elements and system, unknown type, already insulated, none to remove, lining on a pipe), the test duct's whole system insulated (5 created, AHU and terminals left out), mep_insulation totals and missing_only, duct lining 25, pipe insulation 25 |
+| Regression | live_hvac3 on 0.28.0 in the same Revit session: ALL CHECKS AS EXPECTED. Task 04 after the runs: no unsaved changes, 27 / 64 / 21 / 7 / 33 / 273 / 8 / 4 |
+
+## 2026-11-28 · Version 0.27.0 (phase 18 third part: connectors, runs from equipment, quantities, schedules)
+
+New: HvacRead.MepConnectors (mep_connectors); MepOps mep_route from / to_main, elbow retry with swapped width / height,
+mep_connect classification; MepRead.MepQuantities duct surface area. 70 reads, 148 edit operations; compiled 0 / 0 for both
+years; smoke test ALL OK. Test: tests/live_hvac3.py (`run_live_hvac3.bat`) in the detached HV copy, closed without saving.
+(A compact tool description was tried and dropped at Mohamed's request: the full catalogue stays.)
+
+Client setup (Mohamed: match the ETABS installer). The ETABS and SAP2000 install.bat and server exe are identical; their
+install log writes the same three Claude Desktop files as ours and Codex. OpenAI's MCP page (learn.chatgpt.com/docs/
+extend/mcp): the ChatGPT desktop app, Codex CLI and IDE extension share ~/.codex/config.toml; STDIO options command,
+args, env, env_vars, cwd; startup_timeout_sec default 10, tool_timeout_sec default 60. So the Codex entry now also serves
+ChatGPT and sets 30 / 3600 s; Claude entries keep user settings; backups unique. Smoke test extended: ALL OK.
+
+Merged the 0.26.5 code-audit fixes made on 27 Nov in the "MCP implementation code audit" chat (H1-H2, M1-M6, L1-L10:
+operation journal and progress heartbeat, central-model Yes / No per sync and relinquish, accept-loop retry, 4 MB request
+guard, batch_read budget, PathPolicy / allowed_roots.txt, ignoredParams, ownership scan limit, stricter whole numbers,
+receipt eviction, dead-session skip, pinned requirements). That chat wrote 27 files at 21:26; this session's 0.26.5
+install fix (22:46) then rewrote catalog.py, client_config.py, smoke_test.py, README.md, CHANGELOG.md, BridgeInfo.cs and
+ACTIONS.md from an older base, dropping its edits there. Restored from that chat's transcript: help by group title or list
+and the compact-description switch (catalog.py), the Codex writer that recognises [mcp_servers."revit"] and writes
+atomically (merged with the TOML check of 0.26.5), the smoke checks (recent writes, 4 MB guard, ignoredParams, grouped
+help), the README sections (central dialog, allowed folders, ignored options, recent writes) and its CHANGELOG entry. The
+other 20 files were never overwritten. One choice differs from that chat: the full tool description stays the default
+(Mohamed: do not shorten); REVIT_MCP_DESCRIPTION=compact gives the short one. Both years compile 0 / 0; smoke test ALL
+OK; the live runs above already ran the add-in with that chat's changes.
+
+| Run | Result |
+| --- | --- |
+| 1 | mep_connectors: 50 of 50 mechanical equipment with connectors, 7 with a free duct connector (the smallest a 2350x627 return, facing down). Route from it: "No elbow at path point 2" |
+| 2 | Same, with the turn along the connector's height axis: still no elbow |
+| 3 | Terminal scenario added: route, elbow and tap made, but Revit rolled the batch back at commit ("modified to be in the opposite direction"): the 600 mm first segment was shorter than the elbow. AHU: the test had picked an oval duct type |
+| 4 | Lengths 1.5 m (terminal) and 3 m (AHU), types matched to the connector shape: terminal scenario all OK. AHU still no elbow; a free-standing 2350x627 bend with the same type was made, so the routing preferences were fine |
+| 5 | Cause found: the first path point was a hair off the connector's axis (rounded coordinates), so a 300 mm stub was inserted and Revit was asked for an elbow between two nearly straight segments. Fixed: within 2 degrees counts as straight ahead and is snapped onto the axis |
+| 6 | AHU route made; the test's tee of a 2350 mm branch into a 2650 mm test main failed (not a real-world joint) |
+| 7 | ALL CHECKS AS EXPECTED: terminal: from + elbow + tap into a main, terminal connected; AHU: from the 2350x627 return + elbow, unit connected; refusals (wrong classification, size with from, connect with no free connector of that classification); duct surface area; air terminal and duct schedules with rows; HV closed without saving |
+
+## 2026-11-27 · Version 0.26.5 (install for Claude Desktop 6.x)
+
+Mohamed: the installation snippet no longer worked; the SAP2000 MCP package (Desktop\CSI MCP\dist\Sap2000Mcp) does.
+The last Revit install log (26 Nov) showed RESULT=OK and "already configured" for %APPDATA%\Claude and the Store copy.
+The SAP2000 server's client_config module (read from its exe) also writes %LOCALAPPDATA%\Claude-Data\claude_*\
+claude_desktop_config.json, the file Claude Desktop 6.x reads (this laptop runs 6.28899). Ported that, plus CODEX_HOME and
+a TOML check before replacing the Codex file. Smoke test extended (6.x file with other settings kept, Codex parsed, a rerun
+changes nothing): ALL OK.
+
+## 2026-11-26 · Version 0.26.4 (ChatGPT audit fixes merged and tested live)
+
+Reviewed every change in `Desktop\Revit MCP - ChatGPT\revit-mcp` (12 files and the audit note) against the 0.26.3
+source: all built on 0.26.3, none conflicting; merged as they are. Also fixed the audit's open item on spaces_from_rooms
+(max applied before the level filter). Compiled 0 / 0 for both years; smoke test ALL OK.
+
+| Run | Result |
+| --- | --- |
+| install (run_install_claude_open.bat) | Add-ins for 2024 and 2027 installed. The server exe copy failed: the file was in use (the ChatGPT desktop app was running) |
+| tests/live_docs.py (Task 02 opened from Recent, reads only) | ALL CHECKS AS EXPECTED: background open / reuse / close, user's Task 02 close refused, workshared file opened detached, batch_read with max_files and resume_after, model_new in memory and active (scratch_<guid>), Task 04 activated, scratch closed |
+| tests/live_hvac2.py | ALL CHECKS AS EXPECTED, including the edits pinned to the opened HV copy and the switch back to Task 04 (already open: activated by the new path). Spaces now taken in level / number order |
+
+## 2026-11-26 · Recheck of the updated 0.26.3 source
+
+Fixed document ownership and activation, batch read cleanup, mixed transaction retries, phase-sensitive space matching, split-mode worksharing, and live test targeting. Both Release targets compiled with zero warnings and errors. Simulated MCP checks passed. The existing frozen server answered the stdio probes and emitted a shutdown traceback on stderr. The patched add-ins were built without deployment. The [0.26.3 audit and file-by-file change record](0.26.3-AUDIT-CHANGES.md) gives the evidence, outstanding risks and reasons for each edit.
+
+## 2026-11-26 · Version 0.26.3 (phase 18 second part: spaces, zones, airflow, terminals, system membership)
+
+New edit operations: spaces_from_rooms, space_airflow_set, hvac_zone_create (SpaceOps); air_terminal_place,
+mep_system_add, mep_system_remove (MepOps). 69 reads, 148 edit operations; compiled 0 / 0 for both years. Test:
+tests/live_hvac2.py (`run_live_hvac2.bat`): HV copy opened active, X-A-GN linked into it (shared coordinates refused:
+"do not share the same coordinate system"; origin to origin used), then the steps below; HV closed with changes
+discarded, Task 04 left active.
+
+| Run | Result |
+| --- | --- |
+| 0.26.0 | Spaces: 23 of 23 rooms, all enclosed. Lists of values ("supply": [200, 150], "flows": [100, 120]) refused: the per-point helper read the value as one number first. A single flow (80 L/s) did not take: the built-in flow parameter of M_Supply Diffuser is not what drives its connector (it kept the family default, 235 L/s = 500 CFM). Removing a system's only terminal: Revit's "should be less than elements contained". A second spaces_from_rooms run made one duplicate ("POOL OFFICE": no space found at the room point) |
+| 0.26.1 | All of the above fixed (lists; flow written to the parameter that drives the connector and checked by the connector flow; empty-system refusal; second probe heights and a number + name match). Connected terminals landed in systems other than the main's |
+| 0.26.2 | Terminals join the main's system before connecting. This model has two systems on the same supply network (KSAD 1 and KSAD 17); Revit settles the membership at commit, so the test reads it after commit |
+| 0.26.3 | ALL CHECKS AS EXPECTED: 23 spaces from the linked rooms, all enclosed, a second run skips all 23; design airflow 200 / 150 supply and 120 return read back; wrong count refused; zone "MCP Test Zone" of 2 spaces, 82.2 m2; zone across levels refused; M_Supply Diffuser (level-based, from the model) x2 under a supply main at 100 and 120 L/s, both connected with tees and in the network's system KSAD 1 (no new default system); a free terminal at 80 L/s added to KSAD 1 (3 members) and removed (2); removing it again refused ("Not in system"); air_terminals lists 3 |
+
+## 2026-11-26 · Version 0.25.4 (phase 18 first part: MEP / HVAC reads, routes, branches, systems)
+
+Mohamed supplied detached, never-workshared copies of the office's Block B models in
+`Desktop\New folder\detached\detached` (architecture, electrical, HVAC, plumbing, fire fighting, structure, federated)
+and agreed to real test edits there that are never saved. Survey (model_files, batch_read): all Revit 2024; the HVAC
+model has 840 ducts, 767 duct fittings, 50 mechanical equipment and 57 duct systems; no model has MEP spaces.
+
+New: Read/HvacRead.cs (mep_flow, mep_connectivity, air_terminals); MepOps mep_route, mep_connect, mep_system_create;
+batch_read `actions`. 69 reads, 142 edit operations; compiled 0 / 0 for both years. Test: tests/live_hvac.py
+(`run_live_hvac.bat`): batch_read over HV and PL, then the HV copy opened active, edited, closed with changes discarded;
+Task 04 left active.
+
+| Run | Result |
+| --- | --- |
+| 0.25.0 / 0.25.1 | mep_connect: Revit refused the takeoff with the branch end inside the main. The branch now ends on the main's centerline; the HVAC duct types route with tees, not taps, so a tee fallback was added (BreakCurve + NewTeeFitting) |
+| 0.25.2 | All passed except mep_system_create: "connectors can't match system with domain, system type or direction" (the indoor unit has supply, return and sanitary pipe connectors) |
+| 0.25.3 | Connectors filtered by the system type's classification, others listed. Then "The base connector has been used": the base equipment's only matching connector had also been added as a member |
+| 0.25.4 | ALL CHECKS AS EXPECTED: batch_read 3 actions x 2 files in 7.7 s; mep_flow 840 ducts / 28 systems; air_terminals with the no-spaces note; a stub under a main connected with a tee (branch 8x8); a branch that misses the main by 37 m refused; L-shaped route = 2 ducts + 1 elbow; collinear path refused; duct system from a unit with only pipe connectors refused; system of only its base equipment refused; Hydronic Return system of two indoor units, the first as base (type found by classification, supply and sanitary connectors listed as left out); system read back by mep_systems; HV copy closed, changes discarded |
+
+## 2026-11-26 · Version 0.24.1 (phase 16: open, close, new, batch reads)
+
+New: Read/DocumentActions.cs (list_documents, model_files, model_open, model_close, model_new, batch_read); Rc.Target
+(a non-active document for reads); DocumentTarget.Verify finds any open model by document_id for reads (edits: the
+active model only). The server gives model_open, model_new and batch_read the long timeout. 66 reads, 139 edit
+operations, 4 worksharing actions; compiled 0 / 0 for both years.
+
+| Run | Result |
+| --- | --- |
+| tests/live_docs.py, 0.24.0 (Task 02 open by the user) | All checks passed except two refusal messages: a document_id naming the ACTIVE model did not set the target, so model_close said "give document_id" instead of "not opened by Claude" / "active model" (both still refused) |
+| 0.24.1 | ALL CHECKS AS EXPECTED (19): model_files of Desktop\New folder (versions, backups skipped); Task 04 opened in the background in 2.3 s, read by document_id (get_project_info, count_by_category) with the active model unchanged; second open reused it; get_selection on it and an edit with its id refused; closing the user's Task 02 refused; Task 04 closed; the workshared KTR15 Block E file opened detached in 7.3 s with worksets kept (opened closed) and closed; batch_read count_by_category over Task 04 + Task 02 (Task 04 opened and closed again, Task 02 left open), an edit refused, max_files / resume_after; model_new in memory, read and closed; model_new active (scratch_..., %TEMP%\RevitMcpScratch), closing it while active refused, Task 04 opened active, scratch closed; the user's model unchanged |
+
+Left over: Task 04 stays open and active (opened by Claude; Revit cannot close the active model from an add-in) and two
+scratch files remain in %TEMP%\RevitMcpScratch (they also show in Revit's Recent list).
+
+## 2026-11-26 · Version 0.23.1 (phase 12 worksharing; copy from another model)
+
+Mohamed opened KTR15-G26-Z2-X-S-RC-RFT-ZZ-20100-00, a workshared CLOUD model in Autodesk Docs (project KT-G26-Z2), and
+confirmed it is a throwaway test model only he uses, where syncs and test edits are allowed. Never assume this for any
+other KTR15 model. He also opened Revit Task 02 (drafting views, a legend) as a copy source.
+
+| Run | Result |
+| --- | --- |
+| tests/live_ws.py, 0.23.0 | status, checkout (Workset1 + a column), relinquish all: as expected. Sync refused by Revit: "saving local before ... and after ... is mandatory" (cloud). Refusals were reported as "outcome unknown". The model was closed with "Do not save" + "Relinquish all": the test value never reached the cloud |
+| tests/live_ws.py, 0.23.1 | ALL CHECKS AS EXPECTED: checkout, relinquish, edit Comments, sync (11 s, relinquish all: column current with central, not held, nothing unsaved), reload_latest, value restored and synced again (26 s, relinquish borrowed). Two syncs in the cloud model, comments "MCP 0.23.0 sync test" and "MCP test: Comments restored" |
+| tests/live_copy.py (Task 02 open, new scratch project) | ALL CHECKS AS EXPECTED (after a test fix: views_copy_from needs view names): 5 drafting views and Legend 1 copied and read back; a second copy skipped all 6; standards_copy of line styles, fill patterns and text types; unknown model refused. Scratch discarded, Task 02 unchanged |
+
+Also: GetModelUpdatesStatus says CurrentWithCentral for an existing element edited locally (NotYetInCentral is for new
+elements); the checkout status shows the pending edit. While opening Task 02 from File > Recent, a local KTR15 Block B
+file was opened by mistake and closed unchanged.
+
+## 2026-11-26 · Version 0.22.2 (join_overlaps on a real model; worksets; steel connections read live)
+
+Mohamed opened a detached copy of the Block B structure model (KTR15-G26-Z2-B-S-RC-RFT-XX-20001-00, detached with
+worksets preserved, never saved) and Revit Task 02 (steel, with connections). He agreed to real edits in the unsaved
+detached copy, closed without saving afterwards.
+
+| Run | Result |
+| --- | --- |
+| Worksets (detached copy, real) | workset_create made "MCP Test A" and "MCP Test B"; a second create reported alreadyExist; workset_set moved a column and a beam, list_worksets read them back in "MCP Test A", owned by the current user; an unknown workset was refused with the list. The open check is closed |
+| join_overlaps (detached copy), 0.22.0 | 169 measured unjoined pairs (35.8 m3 counted twice). Dry run passed (workshared: no trial commit); the real run joined all 169, then Revit rolled the batch back: "Can't cut joined element" on 3 grade beams GB1 250x600 at -2.10 and 3 slabs 280 mm (one element per failure, so the exact-pair detach never applied) |
+| 0.22.1 | Retry without the failing elements, matched on JoinElementsFailures.CannotCutJoinedGeometry: did not trigger live (Revit uses another definition) |
+| 0.22.2, real run | Retried once without the 6 elements: 151 pairs joined, 18 listed in skippedCutConflict, warning names the elements. find_overlaps after: 20 unjoined pairs, 4.4 m3 (from 169, 35.8 m3). Copy discarded |
+| Task 02, tests/live_reads_task02.py (reads only) | steel_connections: 80 connections (22 base plates, 25 single and 4 double tube brace gussets, 14 bolted knees with haunch, 7 apex haunches, 8 beam seats), each with type and its columns / beams; analytical_model and list_loads answer (no analytical model; 8 default load cases); Task 02 unchanged |
+
+Also seen: the Claude app's Revit MCP server was started before the 0.21 install, so it refused the new read actions;
+the test scripts call the add-in directly. Restarting the Claude app loads the new catalogue.
+
+## 2026-11-26 · Version 0.22.0 (edits: MEP runs, openings at crossings, rooms, analytical model, loads)
+
+Mohamed gave one more edit approval (two in the end: a fix needed a rebuild and a Revit restart). New: Edit/MepOps.cs
+(mep_run_create), crossing_opening in Edit/OpeningOps.cs (intersects the run's centreline with the host's solids, sizes
+from the run's cross-section and connector axes), Edit/SpaceOps.cs (room_create, room_separation), Edit/AnalysisOps.cs
+(analytical members and panels, load cases, combinations, loads). Revit 2023+ loads must be hosted, so load_place takes
+an analytical element (or a physical one with an association); free-standing loads are not offered. 59 reads, 139 edit
+operations; compiled 0 / 0 for both years. Test: tests/live_p10.py (task04: dry runs; scratch: real runs).
+
+Live, Revit 2024:
+| Run | Result |
+| --- | --- |
+| live_p10 task04 (dry runs), twice | ALL CHECKS AS EXPECTED; Task 04 unchanged |
+| live_p10 scratch, first run | 5 checks failed, all in rooms: optional names / numbers were read as empty lists (one name per point refused); all_regions (NewRooms2) also filled regions that already had a room (rooms of zero area); list_spaces reported "Name Number" as the name. Everything else passed |
+| Fixes | names / numbers only checked when given; all_regions places rooms only in plan circuits with no room (PlanTopology, IsRoomLocated); names from ROOM_NAME |
+| live_p10 scratch, after the fixes (new Revit session, second approval) | ALL CHECKS AS EXPECTED, nothing skipped: box of walls, slab, beam; rooms 74.6 m2, split by a separation line into 37.3 + 37.3 m2; no region left; a space; pipe through the slab, pipe through the beam web, 16x12 in duct through a wall found by mep_crossings; openings 150 mm round (2 in pipes + 50 each side) and 500 x 400 in the wall; no crossings left after; analytical member (8000, beam role) and panel (200) associated with the beam and slab; load cases, combination 1.4 / 1.6; six loads read back (point -10 kN, area -3 kN/m2 over 80 m2); a load given on the physical beam lands on its analytical member; refusals as expected |
+| Regression, Task 04 dry runs | live_p6: ALL CHECKS AS EXPECTED |
+
+## 2026-11-25 · Version 0.21.0 (reads: ray casting, clearances, MEP, spaces, analysis, connections)
+
+Mohamed opened the KTR15 federated model (a detached, non-workshared local copy in Desktop\New folder\detached\detached,
+9 links: architecture x3, HVAC, plumbing, fire fighting, electrical, structure x2) and asked for several phases built
+and tested at once before he slept, giving one edit approval for the night. New: Read/QueryRead.cs (ray_cast,
+clearances: ReferenceIntersector, FindReferencesInRevitLinks), Read/MepRead.cs (mep_systems, mep_quantities,
+mep_crossings: Solid.IntersectWithCurve across two link transforms), Read/AnalysisRead.cs (list_spaces,
+analytical_model, list_loads, steel_connections). 59 reads, 130 edit operations. Compiled 0 / 0 for both years first time.
+
+Live, Revit 2024 (one session, no restart; edit approval once at 23:35):
+| Run | Result |
+| --- | --- |
+| Federated model, tests/live_federated.py (reads only) | ALL CHECKS AS EXPECTED, nothing skipped, model unchanged. HVAC 93 systems (57 duct, 36 pipe), 958 runs 2203 m; plumbing 50 systems, 623 runs 286 m; fire 10 systems, 1084 runs 2405 m; electrical 58 systems, no trays / conduits. Rooms: 23 in X-A-GN (2424 m2), 1 unplaced in B-A-GN. Analytical model, loads and connections: none in the structure links. ray_cast from a linked beam up / down: hit distances match the points, the beam itself is not hit. clearances ducts down: 840 measured, smallest 5.8 mm to ceiling tiles (architecture link), 6 mm to a chilled water pipe; ducts up to slabs under 300 mm: 613, smallest 16 mm. mep_crossings: HVAC 108, plumbing 94, fire 89 (complete, under 1 s each); one crossing per discipline confirmed by an independent ray_cast hitting the same structural element |
+| Missing-choice message (0.20.0 fix) | Confirmed: check_names without kind and rebar_numbering without action are refused with "'... ' is required" |
+| Regression on 0.21.0, Task 04 dry runs | live_p6, live_p7, live_p7b, live_audit, live_p89: ALL CHECKS AS EXPECTED; Task 04 unchanged (p89 is the first phase 8 / 9 run since dry runs commit on trial) |
+| Regression on 0.21.0, scratch projects (real, discarded) | live_p6, live_p7, live_p7b: ALL CHECKS AS EXPECTED; live_p89: all except the known export_dgn (no DGN setup) and export_gbxml (no energy model), as in 0.17.0 |
+
+Mistake on the way: computer_open_application on a running Revit started a second Revit (known pitfall); it was closed
+at its Home page, no model was opened in it.
+
+## 2026-11-25 · Version 0.20.0 (phase 7, second part: numbering, containers, Revit 2027 splices)
+
+New: plugin/Core/Numbering.cs (list_numbering), rebar_numbering / splice_type_create / rebar_splice in ReinforcementOps,
+container rows in rebar_list, 2027 splice / crank types in list_reinforcement_types. 50 reads, 130 edit operations.
+API: NumberingSchema in 2027 retires GetNumberingSchema(doc, type), SchemaType, Assign / Move / Merge sequences and
+minimum digits; only GetSchemasInDocument, GetNumberingSequences, GetNumbers, RemoveGaps, ShiftNumbers and ChangeNumber
+are used (both versions). Splices: RebarSpliceTypeUtils, RebarSpliceRules, RebarSpliceUtils (2027 only, behind #if).
+
+Live (tests/live_p7b.py, and live_p7.py rerun in 2027):
+| Run | Result |
+| --- | --- |
+| Revit 2024, Task 04 (dry runs) | ALL CHECKS AS EXPECTED after the fix below. Task 04's rebar numbering has real gaps (e.g. RFT_Footing 3-6, 10-14, ... missing 7-9, 15, 21-23, 26-35, 40-41); remove_gaps / shift / change preview; unknown partition refused with the list; splices refused (2027 only); Task 04 unchanged |
+| Revit 2024, scratch (real, discarded) | ALL CHECKS AS EXPECTED, nothing skipped: footing bars, partition P7B by set_parameters, shift to 101, change 101 -> 150 (gap 103-149), remove gaps; splice ops refused |
+| Revit 2027, scratch (real, discarded) - first live 2027 runs | live_p7b ALL CHECKS AS EXPECTED, nothing skipped: numbering as in 2024; splice type "Lap 40d" (lap 40); Concrete-Rectangular Beam loaded from Revit's US Imperial library, 12 m beam, rebar_beam; rebar_splice max 6000 split the 11 924 mm set into 6000 + 6000 + 1194 (= 11 924 + 2 x 635 lap). live_p7 (phase 7) ALL CHECKS AS EXPECTED in 2027 too (hooks through SetTermination*, fabric laps, path, coupler, annotation) |
+
+Found and fixed on the way: Revit 2024 names every numbering schema "NumberingSchema" (kind now from the numbered
+parameter); rebar_splice read the spliced bar's id after Revit replaced it (InvalidObjectException; id kept before);
+the 2027 template has no concrete beams (test loads Revit's library family); test used a 32 mm stirrup in a 300 mm
+beam (Revit: "Can't solve Rebar Shape", reported cleanly). Pending live check: the missing-'action' / missing-choice
+message (Args.Choice), built after the last live run.
+
+Revit 2027 notes: its Home page takes about 2 minutes to load; until then the window is blank and the bridge reports
+busy. Close button at the window's top right (1361, 13 at full scale).
+
+## 2026-11-25 · Version 0.19.0 (phase 7, first part: path / fabric reinforcement, hooks, couplers, rebar annotation)
+
+New: plugin/Edit/ReinforcementOps.cs (6 edit operations), plugin/Read/ReinforcementRead.cs (list_reinforcement_types,
+fabric / coupler rows for rebar_list). 49 reads, 127 edit operations. API checked first against the 2024 / 2027
+inventories: PathReinforcement.Create, FabricArea.Create, FabricSheet.Create + PlaceInHost, RebarCoupler.Create with
+RebarReinforcementData, MultiReferenceAnnotation.Create are the same in both; hook orientation / rotation is
+SetHookOrientation / SetHookRotationAngle in 2024 and SetTerminationOrientation / SetTerminationRotationAngle in 2027.
+
+Live, Revit 2024 (tests/live_p7.py), found and fixed on the way:
+- Fabric area laps were silently ignored (set before Revit lays out the sheets, which then takes the sheet type's 609.6):
+  now set after the first regeneration and read back; an unkept value is an error.
+- Task 04 has no fabric wire types: Revit's default sheet type then has no wires, fabric_area "succeeded" with 30 sheets
+  of 0 kg and single sheets could not be placed ("out of the host"). Wireless sheet types are now refused.
+- rebar_annotate defaulted to the view's right direction; Revit needs the bar set's distribution direction (bar plane
+  normal) projected into the view. A set laid out along the view is now refused with a clear message.
+- The template's rebar annotation type has no tag type: only the dimension is made; this is now reported, not hidden.
+- Path bars at a slab edge with flip false lay outside the slab (y -1208 to 308 for a slab from y 0): flagged.
+
+| Run | Result |
+| --- | --- |
+| Task 04 (dry runs, trial commit) | ALL CHECKS AS EXPECTED. Path reinforcement and fabric area on a 235 m2 slab preview; hooks start (Rebar Hook 90, right) and none + rotation preview; missing length, unknown hook, empty request refused; fabric with no wire types refused; annotation previews in Cross Sec. 01a for a set seen across its bars, sets along the view refused clearly; Task 04 unchanged. Skipped (not in the model): coupler families, fabric types |
+| New scratch project, Imperial template (real runs, discarded) | ALL CHECKS AS EXPECTED, nothing skipped. Slab path 28 bars (flagged beyond host), flipped 28 inside; wall path 39 bars with alternating; fabric area 4 sheets 144 kg, laps 400 / 300 as given; sheet 12x12-W15xW15 placed at 30 deg (43 kg); hooks set and read back, then removed; coupler FS#5 on a bar end (10), wrong type refused (IncorrectEndTreatmentCoupler, explained); annotation dimension made, missing tag type reported; rebar_list shows path bars and 5 sheets |
+
+Not run: Revit 2027 (termination API path), coupler joining two bars end to end, fabric on walls.
+
+## 2026-11-25 · Version 0.18.1 (API alignment audit of the built features)
+
+Mohamed asked, before phase 7, to make sure everything built is aligned with the API's types and methods. Full report:
+docs/API_ALIGNMENT_AUDIT.md. Method: (1) a small metadata reader (System.Reflection.Metadata) listed every TypeRef and
+MemberRef into RevitAPI / RevitAPIUI in the compiled 2024 and 2027 add-ins and matched them to the API inventory of
+each year: none missing, none obsolete; (2) usage patterns reviewed (transactions, failures, units, geometry options,
+parameters, rebar); (3) members new in 2027 on the types already used were listed.
+
+Fixed: unit classification by spec dimension (U.KindOf, five call sites), trial-commit dry runs in a rolled-back
+TransactionGroup (not on workshared models), Revit 2027 rebar mass in rebar_list, overlap volume per solid pair.
+
+Tests: smoke ALL OK; 2024 and 2027 builds 0 / 0 (cloud and laptop); install RESULT=OK; ping 0.18.1. Live, Revit 2024,
+tests/live_audit.py on Task 04 (reads, dry runs): ALL CHECKS AS EXPECTED (bar diameter 10 mm = 0.01 m, spacing 175 =
+0.175, reinforcement volume m3; overlap warning of two identical walls reported by the dry run, group rolled back; Task
+04 left without unsaved changes, same counts). The first run flagged integer parameters (Quantity) for having no unit:
+a test error, corrected. Not run: Revit 2027.
+
+## 2026-11-25 · Version 0.18.0 (phase 6: coordinates, annotation values, link management, clash with a link)
+
+Plan source: the Revit API capability map (https://claude.ai/artifact/1TPLW8RrsshSPtNaz7fxiJ), build order in
+ROADMAP.md. New: plugin/Read/CoordRead.cs, AnnotationRead.cs, ClashRead.cs; link_reload / link_unload / link_set in
+plugin/Edit/LinkOps.cs (reload and unload are deferred after the commit, as the API cannot run them in a transaction;
+unload uses a callback that never saves shared positions back to the link). 48 reads, 121 edit operations.
+
+Shared coordinates: the API's ActiveProjectLocation transform direction differs between sources, so get_coordinates
+picks the direction that reproduces the base point and survey point SharedPosition and reports `checkError` (0 on
+Task 04). Clash: link elements prefiltered by the host element box moved into link coordinates, host solids moved into
+the link, BooleanOperationsUtils intersection; clearance clashes are not checked.
+
+Tests: smoke ALL OK; 2024 and 2027 builds 0 / 0 (cloud and laptop). Laptop, Revit 2024, tests/live_p6.py:
+
+| Run | Result |
+| --- | --- |
+| Task 04 (reads and refused dry runs) | ALL CHECKS AS EXPECTED. Shared coordinates check 0; internal origin at shared elevation 100000 mm; location Internal; lat 42.387, long -71.242. Annotations: 21342 dimensions, 27 spots, 596 tags, 1967 text notes; 14382 dimensions show 0 (typical details) and 2 empty texts; sheet 0000 empty |
+| Scratch project (real runs, never saved) | ALL CHECKS AS EXPECTED. Task 04 linked origin to origin: get_coordinates link= reports offset 0, 0, -100000 mm (Task 04's shared elevation), agree false. link_set pin / overlay / relative path. Wall placed through a linked column: link_clashes found it (0.285 m3), 4 clashes in all, also with link_category columns only. link_reload (same file and from path), missing file refused, link_unload, clash on the unloaded link refused, reload again, for=me refused (not workshared). Project discarded |
+
+Not run: CAD link reload, Revit 2027 on a model, a workshared model for unload for=me.
+
+## 2026-11-25 · Version 0.17.1 (review of the ChatGPT audit, merged and tested)
+
+Source: `Desktop\Revit MCP - ChatGPT\revit-mcp` (a copy of 0.17.0 plus the audit below, with
+`docs/0.17.0-AUDIT-CHANGES.md` and `docs/PROTOCOL_AUDIT.md`). An earlier draft of the same patch had also been written
+straight into this folder at 00:45 on 25 Nov (7 files, after the 0.17.0 package was built at 00:32, so the release was
+not affected); every line of it is in the final audit version, which replaced it.
+
+Review, file by file against the GitHub release (de44491): the claims in the change log match the code. Kept all of it.
+Two corrections:
+- EditReceipts: the audit marked a receipt "running" before DocumentTarget / EditEngine checks, so a refused request
+  (Revit busy with a command, family document, read-only model, bad units) would have come back as "edit outcome
+  unknown" and locked its operation_id. Now `Rc.Started` is called by EditEngine just before the transaction.
+- Committed edit whose save / export failed afterwards: the audit made it a tool error; the error now starts with "The
+  model changes WERE COMMITTED ... Do not send this edit again" (smoke test with a fake post-commit failure).
+- BridgeServer.Start: a 5 s timeout on the new default-session lock no longer stops the bridge.
+
+Tests: smoke suite ALL OK (cloud); 2024 and 2027 builds 0 warnings / 0 errors (cloud and laptop). Laptop:
+
+| Check | Result |
+| --- | --- |
+| build_package.bat | Both years built here, mcp 1.30.0 / jsonschema in the exe, RESULT=OK |
+| install.bat | Add-in 2024 and 2027 installed; server exe NOT replaced: in use by Claude Desktop / ChatGPT desktop (close them first) |
+| tests/exe_check.py on the new dist exe | MCP handshake (protocol 2025-11-25), ping 0.17.1 on Task 04, unknown argument refused, `dryRun` refused |
+| same on the installed 0.17.0 exe | Unknown argument silently accepted; `dryRun` reached Revit and is now refused by the 0.17.1 add-in |
+| tests/live_p89.py task04 (dry runs) | ALL CHECKS AS EXPECTED; Task 04 unchanged (27/64/21/7/33, 273 rebar, no unsaved changes) |
+| Default session | bridge.json written at start-up through the new lock |
+
+Installer, MCP client settings (Mohamed: on some PCs "revit" was missing from Claude Desktop's config). The settings
+were written by configure_clients.ps1: blocked where Group Policy forbids PowerShell scripts, skipped when Claude
+Desktop had never been started (no folder), exposed to Claude Desktop writing its settings back while running, and
+its messages never reached install_result.txt. Now `revit-mcp-server.exe --configure-clients <exe>` (server/
+client_config.py) does it; install.bat logs every line and stops while claude.exe runs (/claude_open overrides);
+uninstall.bat uses `--remove-clients`. Smoke test covers merge, Store copy, Codex, removal, broken JSON. Live, the new
+dist exe on this laptop: Store copy (LocalCache\Roaming\Claude) "already configured"; the normal
+%APPDATA%\Claude file did not have the same entry and was updated (backup next to it); Codex rewritten (backup).
+So on the Microsoft Store install the two copies can differ: both are written and read back now.
+
+The exit traceback "I/O operation on closed file" printed by the frozen exe when its client closes is the same in 0.17.0.
+Open from the audit (not done): export publication race, main-thread queue lifetime, per-process audit log, workbook
+size budgets, verifying prebuilt DLLs. Two Revits at once and Revit 2027 not re-run on 0.17.1.
+
+## 2026-11-25 · Systems and protocol audit of the 0.17.0 source
+
+| Files | Changes and reason |
+| --- | --- |
+| `server/server.py` | Validated and closed tool envelopes, separated unknown-tool protocol errors from execution errors, checked edit modes and options, added a per-process invocation limit, corrected selection and annotations, and propagated cancellation to worker checkpoints. |
+| `server/bridge_client.py` | Validated discovery records, retained the identity of an explicitly selected process, recovered from an invalid default when another session is available, bounded reply read time, validated envelopes and carried indeterminate edit receipts back to clients. |
+| `server/request_lifetime.py` (created), `server/xlsx_util.py` | Added a cancellation signal transferable to worker threads. Check before dispatch or workbook publication so an abandoned worker can stop before its next side effect. |
+| `server/catalog.py`, `server/requirements.txt` | Corrected client-facing claims about exports and selection. Pinned the audited MCP SDK and declared direct dependencies. |
+| `server/excel_io.py` | Rejected duplicate normalized input headers before row dictionaries can discard values. |
+| `plugin/App.cs`, `plugin/Bridge/BridgeServer.cs` | Clean up failed startup, serialize default ownership decisions across Revit processes, bound network writes and discard unterminated request frames. |
+| `plugin/Bridge/EditReceipts.cs` | Reserved uncertain execution outcomes against retry and bounded the number of session receipt IDs while preserving deduplication. |
+| `plugin/Core/Json.cs`, `plugin/Core/Args.cs` | Tightened numeric and string parsing and added a checked whole-number conversion for Revit integer values. |
+| `plugin/Edit/EditEngine.cs`, `plugin/Edit/ManageOps.cs` | Refuse unknown batch keys, misplaced or null preview flags and unknown or null purge options before model changes. |
+| `plugin/Edit/DataOps.cs`, `plugin/Edit/DepthOps.cs` | Use checked integer conversion for global integer parameter values and integer schedule filters. |
+| `plugin/Core/Describe.cs`, `plugin/Read/DepthRead.cs` | Share the eight-corner box transformation, accumulate unrounded solid volume, bound geometry traversal and replace repeated group and view scans with lookups. |
+| `tests/live_p89.py` | Pin the checked document and process, isolate export paths, and fail the run on failed checks or post-commit work. |
+| `tests/fake_bridge.py`, `tests/smoke_test.py` | Added rollback, argument and ambiguous-mode regressions. Run fake processes directly so their Windows PIDs match the session files. |
+| `build_package.bat` | Propagate compiler and copy failures during per-year staging to the overall build. |
+| `docs/PROTOCOL_AUDIT.md` (created), `docs/IMPLEMENTATION_LOG.md` | Recorded severity, source locations, corrections, open risks, specification links, test coverage and the purpose of every changed component. |
+
+No release was published. Native live tests and validation of a newly packaged installer remain pending.
+
 ## 2026-11-24 · Version 0.17.0 (phases 8 and 9: modify / documentation depth, standards and data)
 
 New files: `plugin/Edit/DepthOps.cs` (flip, end_join, family_place_hosted, group_create / group_place / ungroup,

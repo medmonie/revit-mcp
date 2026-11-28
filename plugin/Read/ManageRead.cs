@@ -32,7 +32,8 @@ internal static class ManageRead
             ["sharedParameterFile"] = doc.Application.SharedParametersFilename,
         };
         if (Flag(p, "shared_file_contents", false) || Has(p, "shared_file"))
-            result["sharedFile"] = SharedFileContents(doc.Application, Str(p, "shared_file"));
+            result["sharedFile"] = SharedFileContents(doc.Application,
+                Has(p, "shared_file") ? EditContext.FullPath(NeedStr(p, "shared_file"), "shared_file") : null);
         return result;
     }
 

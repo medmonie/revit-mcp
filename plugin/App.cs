@@ -16,6 +16,8 @@ public class App : IExternalApplication
         }
         catch (Exception ex)
         {
+            BridgeServer.Stop();
+            MainThread.Shutdown();
             TaskDialog.Show("Revit MCP bridge", "The bridge failed to start: " + ex.Message);
             return Result.Succeeded;   // never stop Revit from starting
         }

@@ -3,10 +3,30 @@ namespace RevitMcpBridge;
 /// <summary>Reading request parameters. Every accessor validates; nothing here touches Revit except ElementId.</summary>
 internal static class Args
 {
+    // Which keys of a request object a handler asked for. Unread keys that the catalogue does not list either are
+    // reported to the caller as ignored (a misspelled option), see BridgeServer.Handle. Entries go with their object.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Obj, HashSet<string>> Seen =
+        new System.Runtime.CompilerServices.ConditionalWeakTable<Obj, HashSet<string>>();
+
     private static bool TryGet(Obj p, string name, out object value)
     {
         value = null;
-        return p != null && p.TryGetValue(name, out value) && value != null;
+        if (p == null) return false;
+        var seen = Seen.GetOrCreateValue(p);
+        lock (seen) seen.Add(name);
+        return p.TryGetValue(name, out value) && value != null;
+    }
+
+    /// <summary>The keys of a request object that no accessor of this class was asked for.</summary>
+    public static List<string> Unread(Obj p)
+    {
+        var unread = new List<string>();
+        if (p == null) return unread;
+        var seen = Seen.GetOrCreateValue(p);
+        lock (seen)
+            foreach (string key in p.Keys)
+                if (!seen.Contains(key)) unread.Add(key);
+        return unread;
     }
 
     public static bool Has(Obj p, string name) => TryGet(p, name, out _);
@@ -45,7 +65,9 @@ internal static class Args
     /// <summary>One of a fixed set of words (case-insensitive); returns it in lower case.</summary>
     public static string Choice(Obj p, string name, string dflt, params string[] allowed)
     {
-        string value = (Has(p, name) ? NeedStr(p, name) : dflt).ToLowerInvariant();
+        string raw = Has(p, name) ? NeedStr(p, name) : dflt;
+        if (raw == null) throw new ArgumentException($"'{name}' is required: one of {string.Join(", ", allowed)}.");
+        string value = raw.ToLowerInvariant();
         if (!allowed.Contains(value)) throw new ArgumentException($"'{name}' must be one of: {string.Join(", ", allowed)}.");
         return value;
     }
@@ -61,6 +83,13 @@ internal static class Args
 
     public static double? Dbl(Obj p, string name) => TryGet(p, name, out var v) ? Number(v, $"Parameter '{name}'") : (double?)null;
 
+    public static int IntegerValue(double value, string what)
+    {
+        if (!(value >= int.MinValue && value <= int.MaxValue && value == Math.Truncate(value)))
+            throw new ArgumentException($"{what} must be a 32-bit integer.");
+        return (int)value;
+    }
+
     public static double NeedDbl(Obj p, string name) =>
         Dbl(p, name) ?? throw new ArgumentException($"Missing numeric parameter '{name}'.");
 
@@ -68,7 +97,10 @@ internal static class Args
     {
         double? d = Dbl(p, name);
         if (d == null) return dflt;
-        return (int)Math.Max(min, Math.Min(max, Math.Round(d.Value)));
+        // A fraction is a mistake, not something to round away. A value outside min..max is still brought to the
+        // nearest bound: the catalogue states these limits ("at most 200") and results report what was used.
+        if (d.Value != Math.Truncate(d.Value)) throw new ArgumentException($"Parameter '{name}' must be a whole number.");
+        return (int)Math.Max(min, Math.Min(max, d.Value));
     }
 
     public static bool? Bool(Obj p, string name)
@@ -113,8 +145,18 @@ internal static class Args
         return v as Obj ?? throw new ArgumentException($"Parameter '{name}' must be an object {{...}}.");
     }
 
-    public static List<string> StrList(Obj p, string name, int max, bool required = true) =>
-        (required ? NeedArr(p, name, max) : Arr(p, name, max)).Select(Text).ToList();
+    public static List<string> StrList(Obj p, string name, int max, bool required = true)
+    {
+        var list = new List<string>();
+        foreach (object v in required ? NeedArr(p, name, max) : Arr(p, name, max))
+        {
+            // names and ids: text, or a number / flag written as text; an object or a list here is a malformed request
+            if (v is Obj || v is List<object> || v == null)
+                throw new ArgumentException($"'{name}' must be a list of names or numbers.");
+            list.Add(Text(v));
+        }
+        return list;
+    }
 
     /// <summary>Element ids given as numbers (or numeric text).</summary>
     public static List<ElementId> Ids(Obj p, string name, int max = 5000, bool required = true)

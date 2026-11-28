@@ -76,12 +76,15 @@ internal static class Describe
     }
 
     public static object Box(Element e, Transform tf = null)
+        => Box(e.get_BoundingBox(null), tf);
+
+    public static object Box(BoundingBoxXYZ b, Transform tf)
     {
-        var b = e.get_BoundingBox(null);
         if (b == null) return null;
-        if (tf == null || tf.IsIdentity) return new Obj { ["min"] = U.Xyz(b.Min), ["max"] = U.Xyz(b.Max) };
+        tf = tf ?? Transform.Identity;
         // The box's own transform (usually identity) then the link's; report the axis-aligned box of the eight corners.
         var full = b.Transform == null ? tf : tf.Multiply(b.Transform);
+        if (full.IsIdentity) return new Obj { ["min"] = U.Xyz(b.Min), ["max"] = U.Xyz(b.Max) };
         var pts = new List<XYZ>();
         foreach (double x in new[] { b.Min.X, b.Max.X })
             foreach (double y in new[] { b.Min.Y, b.Max.Y })
@@ -101,9 +104,19 @@ internal static class Describe
         ["name"] = p.Definition.Name, ["key"] = Find.ParameterKey(p), ["target"] = target,
         ["kind"] = Is(p.Definition.GetDataType(), SpecTypeId.Boolean.YesNo) ? "Boolean" : p.StorageType.ToString(),
         ["spec"] = p.Definition.GetDataType()?.TypeId, ["readOnly"] = p.IsReadOnly,
+        ["unit"] = p.StorageType == StorageType.Double ? UnitOf(p) : null,
     };
 
-    /// <summary>Lengths in request units, areas m2, volumes m3, angles degrees, other measurable values in the project's display unit.</summary>
+    private static string UnitOf(Parameter p)
+    {
+        try { var spec = p.Definition.GetDataType(); return U.UnitLabel(spec, U.KindOf(spec) == U.Kind.Other ? p.GetUnitTypeId() : null); }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// Lengths in request units (any length spec: bar diameter, cover, spacing ...), areas m2, volumes m3, angles degrees,
+    /// other measurable values in the project's display unit (ParameterInfo names it).
+    /// </summary>
     public static object Value(Document doc, Parameter p)
     {
         if (!p.HasValue) return null;
@@ -134,14 +147,9 @@ internal static class Describe
                 try
                 {
                     var spec = p.Definition.GetDataType();
-                    if (Is(spec, SpecTypeId.Length)) return U.Out(v);
-                    if (Is(spec, SpecTypeId.Area)) return U.Area(v);
-                    if (Is(spec, SpecTypeId.Volume)) return U.Volume(v);
-                    if (Is(spec, SpecTypeId.Angle)) return U.Deg(v);
-                    if (UnitUtils.IsMeasurableSpec(spec)) return Math.Round(UnitUtils.ConvertFromInternalUnits(v, p.GetUnitTypeId()), 6);
+                    return U.OutSpec(v, spec, U.KindOf(spec) == U.Kind.Other ? p.GetUnitTypeId() : null);
                 }
-                catch { /* fall through to the raw value */ }
-                return Math.Round(v, 9);
+                catch { return Math.Round(v, 9); }
             }
             default: return null;
         }
@@ -184,11 +192,7 @@ internal static class Describe
         try
         {
             var spec = p.Definition.GetDataType();
-            if (Is(spec, SpecTypeId.Length)) return U.In(d);
-            if (Is(spec, SpecTypeId.Area)) return d / U.M2PerFt2;
-            if (Is(spec, SpecTypeId.Volume)) return d / U.M3PerFt3;
-            if (Is(spec, SpecTypeId.Angle)) return U.Rad(d);
-            if (UnitUtils.IsMeasurableSpec(spec)) return UnitUtils.ConvertToInternalUnits(d, p.GetUnitTypeId());
+            return U.InSpec(d, spec, U.KindOf(spec) == U.Kind.Other ? p.GetUnitTypeId() : null);
         }
         catch { /* not a measurable spec: keep the raw number */ }
         return d;

@@ -11,6 +11,9 @@ internal sealed class EditContext
     public FailureCollector Failures;
     public readonly List<string> Warnings = new List<string>();
 
+    /// <summary>Elements join_overlaps must leave alone: Revit refused a join with them at commit ("can't cut joined element").</summary>
+    public readonly HashSet<long> SkipJoin = new HashSet<long>();
+
     /// <summary>Work that must run after the transaction is committed (saving, exporting, switching view). Skipped on dry runs.</summary>
     public readonly List<(int Index, Action Run)> AfterCommit = new List<(int, Action)>();
     private readonly HashSet<string> _outputs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -74,7 +77,7 @@ internal sealed class EditContext
     {
         if (!IOPath.IsPathRooted(path) || IOPath.GetPathRoot(path).Length < 3)
             throw new ArgumentException($"'{argument}' must be a full path, e.g. C:\\Projects\\out.");
-        return IOPath.GetFullPath(path);
+        return PathPolicy.Check(IOPath.GetFullPath(path), argument);
     }
 
     public static string Folder(Obj p) => FullPath(NeedStr(p, "folder"), "folder");
@@ -118,6 +121,9 @@ internal sealed class FailureCollector : IFailuresPreprocessor
     /// </summary>
     public readonly HashSet<(long, long)> JoinPairs = new HashSet<(long, long)>();
 
+    /// <summary>Elements of pairs joined in this batch that Revit could not cut at commit; join_overlaps retries without them.</summary>
+    public readonly HashSet<long> CutConflicts = new HashSet<long>();
+
     public void Start(Transaction transaction)
     {
         if (transaction.Start() != TransactionStatus.Started)
@@ -128,6 +134,9 @@ internal sealed class FailureCollector : IFailuresPreprocessor
         options.SetForcedModalHandling(true);
         transaction.SetFailureHandlingOptions(options);
     }
+
+    private static IEnumerable<long> failing(FailureMessageAccessor f, ICollection<ElementId> ids) =>
+        (ids ?? new List<ElementId>()).Concat(f.GetAdditionalElementIds()).Select(i => i.Value).Distinct();
 
     private bool IsRegisteredPair(FailureMessageAccessor failure, ICollection<ElementId> failing)
     {
@@ -160,7 +169,20 @@ internal sealed class FailureCollector : IFailuresPreprocessor
                 Resolved.Add(text + " -> detach");
                 resolvedAny = true;
             }
-            else Errors.Add(text);
+            else
+            {
+                if (JoinPairs.Count > 0)
+                {
+                    // Any commit error in a batch that joined elements (Revit reports "can't cut joined element" under
+                    // more than one failure definition): join_overlaps runs again without that element.
+                    // The failing element may also be a third element already joined to one we joined; skipping it then
+                    // removes the joins of this batch that touch it, and never touches the joins that were there before.
+                    var hit = failing(f, ids).ToList();
+                    foreach (var id in hit) CutConflicts.Add(id);
+                    if (hit.Count > 0) Audit.Write("join_commit_error", new { text, definition = f.GetFailureDefinitionId().Guid.ToString() });
+                }
+                Errors.Add(text);
+            }
         }
         if (Errors.Count > errorsBefore) return FailureProcessingResult.ProceedWithRollBack;
         return resolvedAny ? FailureProcessingResult.ProceedWithCommit : FailureProcessingResult.Continue;

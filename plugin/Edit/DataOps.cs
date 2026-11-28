@@ -51,14 +51,8 @@ internal static class DataOps
             return new ElementIdParameterValue(m.Id);
         }
         double d = Number(v, what);
-        if (Is(spec, SpecTypeId.Int.Integer)) return new IntegerParameterValue((int)Math.Round(d));
-        if (Is(spec, SpecTypeId.Length)) return new DoubleParameterValue(U.In(d));
-        if (Is(spec, SpecTypeId.Area)) return new DoubleParameterValue(d / U.M2PerFt2);
-        if (Is(spec, SpecTypeId.Volume)) return new DoubleParameterValue(d / U.M3PerFt3);
-        if (Is(spec, SpecTypeId.Angle)) return new DoubleParameterValue(U.Rad(d));
-        if (UnitUtils.IsMeasurableSpec(spec))
-            return new DoubleParameterValue(UnitUtils.ConvertToInternalUnits(d, doc.GetUnits().GetFormatOptions(spec).GetUnitTypeId()));
-        return new DoubleParameterValue(d);
+        if (Is(spec, SpecTypeId.Int.Integer)) return new IntegerParameterValue(IntegerValue(d, what));
+        return new DoubleParameterValue(U.InSpec(d, spec, U.ProjectUnit(doc, spec)));
     }
 
     private static object Apply(Document doc, GlobalParameter gp, Obj p)

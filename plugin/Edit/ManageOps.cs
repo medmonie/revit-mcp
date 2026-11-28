@@ -78,7 +78,8 @@ internal static class ManageOps
 
         string before = app.SharedParametersFilename;
         bool useDefault = !Has(p, "shared_file") && (string.IsNullOrEmpty(before) || !File.Exists(before));
-        string path = useDefault ? DefaultSharedFile(c.DryRun) : Str(p, "shared_file") ?? before;
+        string path = useDefault ? DefaultSharedFile(c.DryRun)
+            : Has(p, "shared_file") ? EditContext.FullPath(NeedStr(p, "shared_file"), "shared_file") : before;
         if (!File.Exists(path) && !(useDefault && c.DryRun)) throw new ArgumentException($"No shared parameter file at '{path}'.");
         // the shared parameter file is outside Revit's undo: a dry run works on a temporary copy of it
         string realPath = path;
@@ -122,6 +123,9 @@ internal static class ManageOps
                     if (!create) throw new ArgumentException($"'{name}' is missing from the shared parameter file.");
                     var g = file.Groups.get_Item(fileGroup) ?? file.Groups.Create(fileGroup);
                     def = (ExternalDefinition)g.Definitions.Create(new ExternalDefinitionCreationOptions(name, spec()));
+                    // The shared parameter file is outside Revit's undo: say so where a rolled-back batch reports it too.
+                    if (!c.DryRun)
+                        c.Warn($"'{name}' was written to the shared parameter file {realPath}; the file keeps it even if this batch is rolled back.");
                 }
                 ElementBinding binding = instance ? (ElementBinding)app.Create.NewInstanceBinding(catSet) : app.Create.NewTypeBinding(catSet);
                 if (!doc.ParameterBindings.Insert(def, binding, group))
@@ -203,6 +207,10 @@ internal static class ManageOps
 
     private static object Purge(Document doc, Obj p, bool preview)
     {
+        foreach (var option in p)
+            if (option.Value == null || (option.Key != "op" && option.Key != "categories" && option.Key != "keep_ids"
+                && option.Key != "keep_names" && option.Key != "passes" && option.Key != "limit"))
+                throw new ArgumentException($"Unknown or null purge option '{option.Key}'.");
         var catIds = new HashSet<ElementId>(Has(p, "categories") ? Find.Cats(doc, p, "categories").Select(b => new ElementId(b)) : Enumerable.Empty<ElementId>());
         var keep = new HashSet<long>(Has(p, "keep_ids") ? Ids(p, "keep_ids").Select(i => i.Value) : Enumerable.Empty<long>());
         var keepNames = Has(p, "keep_names") ? StrList(p, "keep_names", 500) : new List<string>();

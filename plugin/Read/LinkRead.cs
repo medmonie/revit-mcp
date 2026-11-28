@@ -16,6 +16,7 @@ internal static class LinkRead
                 try { o["status"] = t.GetLinkedFileStatus().ToString(); } catch { /* optional */ }
                 try { o["attachment"] = t.AttachmentType.ToString(); } catch { /* optional */ }
                 try { if (t.IsNestedLink) o["nested"] = true; } catch { /* optional */ }
+                try { if (t.GetConversionData() != null) o["fromIfc"] = true; } catch { /* not a converted (IFC) link */ }
                 try
                 {
                     var r = t.GetExternalFileReference();

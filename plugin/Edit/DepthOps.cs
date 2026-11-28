@@ -333,14 +333,8 @@ internal static class DepthOps
         try { spec = field.GetSpecTypeId(); } catch { /* not a parameter field */ }
         if (v is double d)
         {
-            if (Is(spec, SpecTypeId.Int.Integer)) return new ScheduleFilter(field.FieldId, type, (int)Math.Round(d));
-            double inner = d;
-            if (Is(spec, SpecTypeId.Length)) inner = U.In(d);
-            else if (Is(spec, SpecTypeId.Area)) inner = d / U.M2PerFt2;
-            else if (Is(spec, SpecTypeId.Volume)) inner = d / U.M3PerFt3;
-            else if (Is(spec, SpecTypeId.Angle)) inner = U.Rad(d);
-            else if (spec != null && UnitUtils.IsMeasurableSpec(spec))
-                inner = UnitUtils.ConvertToInternalUnits(d, doc.GetUnits().GetFormatOptions(spec).GetUnitTypeId());
+            if (Is(spec, SpecTypeId.Int.Integer)) return new ScheduleFilter(field.FieldId, type, IntegerValue(d, what));
+            double inner = U.InSpec(d, spec, U.ProjectUnit(doc, spec));
             return new ScheduleFilter(field.FieldId, type, inner);
         }
         if (v is bool b) return new ScheduleFilter(field.FieldId, type, b ? 1 : 0);

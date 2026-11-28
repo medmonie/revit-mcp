@@ -16,8 +16,13 @@ internal static class CadRaster
         public int Width, Height;
     }
 
+    private const double MaxCells = 24e6;          // about 24 million grid cells (several arrays of this size are held)
+    private const double MaxRadiusCells = 2000;    // the gap may span at most this many cells
+
     public static Result Outlines(List<Cad.Item> items, double gap, double cell, double minArea)
     {
+        if (!(cell > 0) || double.IsInfinity(cell)) throw new ArgumentException("'cell' must be a positive length.");
+        if (!(gap >= 0) || double.IsInfinity(gap)) throw new ArgumentException("'gap' must be zero or a positive length.");
         // every curve as straight pieces
         var segs = new List<(XYZ a, XYZ b)>();
         foreach (var it in items)
@@ -41,9 +46,15 @@ internal static class CadRaster
         // grid size: keep it under ~16 million cells by enlarging the cell if needed
         double span = Math.Max(maxX - minX, maxY - minY);
         while ((maxX - minX) / cell * (maxY - minY) / cell > 16e6) cell *= 1.5;
-        int r = Math.Max(1, (int)Math.Ceiling(gap / 2 / cell));          // thickening radius in cells
+        double radiusCells = Math.Ceiling(gap / 2 / cell);
+        if (radiusCells > MaxRadiusCells)
+            throw new ArgumentException("'gap' is too large for this 'cell' size; reduce 'gap' or increase 'cell'.");
+        int r = Math.Max(1, (int)radiusCells);                              // thickening radius in cells
         int pad = r + 3;
-        int W = (int)Math.Ceiling((maxX - minX) / cell) + 2 * pad + 1, H = (int)Math.Ceiling((maxY - minY) / cell) + 2 * pad + 1;
+        double width = Math.Ceiling((maxX - minX) / cell) + 2.0 * pad + 1, height = Math.Ceiling((maxY - minY) / cell) + 2.0 * pad + 1;
+        if (width * height > MaxCells)    // a long, thin drawing is not caught by the area loop above
+            throw new ArgumentException($"The outline grid would need {width * height:N0} cells (limit {MaxCells:N0}); increase 'cell' or reduce 'gap'.");
+        int W = (int)width, H = (int)height;
         res.Cell = cell; res.Width = W; res.Height = H;
         double ox = minX - pad * cell, oy = minY - pad * cell;
         int Ix(double x) => (int)Math.Floor((x - ox) / cell);

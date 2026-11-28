@@ -1,12 +1,12 @@
 # Revit MCP - developer blueprint and handover
 
-Version 0.17.0 · 24 Nov 2026 · Mohamed Ahmed Hamed. Live copy: https://claude.ai/artifact/259SEYX5NoeuYK1zCEqWkp
+Version 0.29.0 · 28 Nov 2026 · Mohamed Ahmed Hamed. Live copy: https://claude.ai/artifact/259SEYX5NoeuYK1zCEqWkp
 
 ## Start here
 
 Revit MCP is Mohamed's local bridge between AI clients (Claude Desktop, ChatGPT desktop, Codex) and Autodesk Revit 2024
 and 2027. It reads, checks, quantifies, models and documents the open model. It never designs. The current version is
-**0.17.0**.
+**0.29.0**.
 
 | Item | Value |
 | --- | --- |
@@ -14,9 +14,9 @@ and 2027. It reads, checks, quantifies, models and documents the open model. It 
 | GitHub | [medmonie/revit-mcp](https://github.com/medmonie/revit-mcp) (public, PolyForm Noncommercial 1.0.0) |
 | Last pushed commit | 0.17.0 (25 Nov 2026; hash in `publish_result.txt`) |
 | Last release | [v0.17.0](https://github.com/medmonie/revit-mcp/releases/tag/v0.17.0) with `RevitMcp.zip` and `RevitMcp-source.zip` |
-| Installed on the laptop | 0.17.0, add-in for 2024 and 2027, server exe in `%LOCALAPPDATA%\RevitMcpBridge\` |
-| Tested live | 0.17.0 on Revit 2024: phases 8 / 9 by tests/live_p89.py (Task 04 dry runs, scratch-project real runs); 0.16 link reads. Revit 2027 not yet run on a model |
-| Not yet done | Revit 2027 live run; DGN / gbXML export; install check on the domain controller |
+| Installed on the laptop | add-in 0.29.0 (server exe 0.26.3 until Claude Desktop and the ChatGPT app are closed for the install), add-in for 2024 and 2027, server exe in `%LOCALAPPDATA%\RevitMcpBridge\` |
+| Tested live | 0.29.0 phase 18 rest: sprinklers, floor drains, sloped sanitary run, sleeves at walls and a slab, sockets on host and linked walls, lights, circuits and panels, tray and conduit elbows and tees, mep_report (tests/live_mep5.py on the FF, PL and E copies), with live_hvac4 and live_hvac3 as regression; 0.28.0 accessories (dampers at points, at a host wall and at a wall of a linked model; a valve), insulation and lining on elements and a system (tests/live_hvac4.py), with live_hvac3 as regression; 0.27.0 connectors, runs from an AHU and a terminal, MEP schedules (tests/live_hvac3.py); 0.26.4 ChatGPT audit fixes (tests/live_docs.py, tests/live_hvac2.py); 0.26.3 spaces, zones, airflow, air terminals, system membership on the detached HVAC copy with the architecture model linked (tests/live_hvac2.py); 0.25.4 MEP / HVAC on a detached HVAC copy (tests/live_hvac.py); 0.24.1 documents and batch reads (tests/live_docs.py); 0.23.1 worksharing on the cloud test model (tests/live_ws.py) and views_copy_from / standards_copy from Task 02 (tests/live_copy.py); 0.22.2 join_overlaps and worksets on a detached workshared copy of Block B, steel_connections on Task 02; 0.22.0 on Revit 2024 (tests/live_p10.py, Task 04 dry runs and scratch real runs); 0.21.0 on Revit 2024: reads on the KTR15 federated model (tests/live_federated.py) and every regression suite; 0.20.0 on Revit 2024 and 2027 (first 2027 runs): tests/live_p7b.py, live_p7.py; 0.19.0 phase 7 by tests/live_p7.py; 0.18.1 API alignment fixes by tests/live_audit.py; 0.18.0 phase 6 by tests/live_p6.py; 0.17.0 phases 8 / 9 by tests/live_p89.py (Task 04 dry runs, scratch-project real runs); 0.16 link reads. Revit 2027 not yet run on a model |
+| Not yet done | Push and release 0.17.1 to 0.27.0; the open items of docs/0.26.3-AUDIT-CHANGES.md (export overwrite race, per-open document identity, model_close from the read tool, UI queue on shutdown, workbook size budgets, staged packaging, audit log across processes); phase 16 second part (schedules, family parameters); phase 17 (architecture); hvac_zone_create on Revit 2027 (GenericZone); 0.22.0 on Revit 2027; a dedicated sleeve family (tested with a coupling as stand-in), area plans, steel connection edits; analytical / loads / connections on a model that has them; Revit 2027 on Task 04; CAD link reload; DGN / gbXML export; domain controller install check |
 | Related docs | Coverage, audit and roadmap: https://claude.ai/artifact/8CA4XSykMoVujLZVs6DJep, `ROADMAP.md`, `CHANGELOG.md`, `docs/ACTIONS.md`, `docs/IMPLEMENTATION_LOG.md` |
 
 **Paste this into a new chat to continue:**
@@ -111,7 +111,24 @@ reach Revit only for the data they read.
 | `server/qs_report.py`, `bbs_report.py`, `excel_io.py`, `xlsx_util.py` | Workbooks: QS, BBS, Excel round trips |
 | `tests/smoke_test.py` | No Revit needed: fake bridge, catalogue vs source names and parameter names, versions, README counts |
 | `tests/live_read.py` | Read checks against the open model |
+| `tests/exe_check.py` | The frozen server exe over stdio: handshake, ping, argument refusal; `run_exe_check.bat` (installed exe), `run_exe_check_dist.bat` (dist exe, before installing) |
 | `tests/live_two_revits.py` | Several Revit sessions: default, session files, automatic target, edit refusal; `run_two_revits_check.bat` appends to `tests\results\two_revits.txt` (`diag_sessions.bat` lists the raw files) |
+| `tests/live_hvac.py` | 0.25 MEP / HVAC: batch_read with actions over the detached HV and PL copies, mep_flow, mep_connectivity, air_terminals, then real edits in the HV copy opened active (mep_connect, mep_route, mep_system_create and their refusals), closed with changes discarded; `run_live_hvac.bat` |
+| `tests/live_hvac2.py` | 0.26 spaces / zones / terminals: links the detached X-A-GN into the HV copy, spaces_from_rooms, space_airflow_set, hvac_zone_create, air_terminal_place with flows connected to a supply main, mep_system_add / remove and refusals; HV closed with changes discarded; `run_live_hvac2.bat` |
+| `tests/live_hvac3.py` | 0.27 connectors and runs from equipment: mep_connectors on the mechanical equipment, mep_route from an air terminal (elbow, tap into a main) and from the AHU's 2350x627 return (elbow), refusals, duct surface area, MEP schedules; HV closed without saving; `run_live_hvac3.bat` |
+| `tests/live_mep5.py` | 0.29 phase 18 rest on the detached FF, PL and E copies (each closed without saving): sprinklers teed into a main, floor drains, sloped run, sleeves (walls, slab), sockets on host and linked walls, lights, circuits and panel, trays and conduits with elbows and tees, refusals, mep_report workbooks; `run_live_mep5.bat` |
+| `tests/live_hvac4.py` | 0.28 accessories and insulation: dampers at two points on one test duct (split pieces followed), at a host wall and at a wall of the linked architecture model, a valve on a test pipe, refusals; insulation add / replace / remove, a system's network, lining, pipe insulation, mep_insulation; HV closed without saving; `run_live_hvac4.bat` |
+| `tests/live_docs.py` | 0.24 documents: model_files, model_open / close / new, reads by document_id, batch_read; never edits; Task 02 open first; `run_live_docs.bat` |
+| `tests/live_ws.py` | 0.23 worksharing on the cloud TEST model KTR15-G26-Z2-X-S-RC-RFT-ZZ-20100-00 only (refuses any other); syncs twice; `run_live_ws.bat` |
+| `tests/live_copy.py` | views_copy_from / standards_copy from Revit Task 02 into a new unsaved project; `run_live_copy.bat` |
+| `tests/live_reads_task02.py` | Reads only on Revit Task 02 (steel connections, analytical model, loads); `run_live_reads_task02.bat` |
+| `tests/live_p10.py` | 0.22.0 edits: MEP runs, crossing openings, rooms / spaces, analytical members / panels, load cases, combinations, loads; `run_live_p10_task04.bat` (dry runs), `run_live_p10_scratch.bat` (real, new unsaved project) |
+| `tests/live_federated.py` | 0.21.0 reads on the KTR15 federated model (detached local copy, 9 links); never edits; `run_live_federated.bat` |
+| `tests/live_p7b.py` | 0.20.0: numbering, containers, splices; `run_live_p7b_task04.bat` (2024 dry runs), `run_live_p7b_scratch.bat` (2024: splices refused; 2027: splices real, loads Revit's library concrete beam) |
+| `tests/live_p7.py` | Phase 7 live test: `run_live_p7_task04.bat` (dry runs; looks for a valid example, reports what the model lacks as SKIPPED), `run_live_p7_scratch.bat` (real runs in a never-saved Imperial project: slab, wall, footing bars, section). `diag_fabric.py` checks fabric sheet placement on Task 04 |
+| `tests/live_audit.py` | 0.18.1 API-alignment checks on Task 04 (reads, dry runs): units of length-type specs, trial-commit dry run, rebar weight source; `run_live_audit.bat` |
+| `tests/live_p6.py` | Phase 6 live test: `run_live_p6_task04.bat` (reads, refused dry runs), `run_live_p6_scratch.bat` (links Task 04 from disk into a never-saved project: Task 04 must be closed; clash, reload, unload) |
+| `tests/run_install_claude_open.bat` | Runs `dist\RevitMcp\install.bat /claude_open`: install while Claude Desktop runs (quitting it cuts computer use) |
 | `tests/live_p89.py` | Phase 8 / 9 live test straight to the add-in: `run_live_p89_task04.bat` (dry runs, refuses other models), `run_live_p89_scratch.bat` (real runs, only in a never-saved project); output `tests\results\` |
 | `tools/gen_docs.py` | Regenerates `docs/ACTIONS.md` from the catalogue |
 | `tools/publish_release.ps1`, `release_notes.md` | GitHub release with assets |
@@ -216,7 +233,7 @@ files, File Explorer by clicks, and the Revit MCP tool. The cloud workspace star
    starts a second Revit.
 3. In File Explorer open `dist\RevitMcp` and double-click `install.bat` (it refuses to run while Revit runs).
 4. Stage `dist\RevitMcp\install_result.txt`: `INSTALLED 2024`, `INSTALLED 2027`, `SERVER ...revit-mcp-server.exe`,
-   `CLIENTS configure_clients.ps1 exit 0`, `RESULT=OK`. The console window stays open; ignore it.
+   `CLIENTS ... configured` (or already configured) for each client, `RESULT=OK`. The console window stays open; ignore it.
 
 **7. Reopen and test**
 
@@ -326,14 +343,57 @@ Ids can change if Mohamed edits the file. Confirm them with `get_elements` first
 | A permission dialog left open makes reads time out after 30 s | Ask Mohamed to click Yes before polling; the test script retries |
 | A second Revit took over all calls; closing it left "not reachable" (fixed 0.17.0) | bridge.json = first Revit (or MCP Status), handed over on close; edits need select_revit while several are open |
 | `open_application` only brings the running Revit forward | Start a second Revit from Explorer: C:\Program Files\Autodesk\Revit 2024, sort by Type, double-click Revit.exe |
+| install.bat: "server copy" fails, file in use | Claude Desktop or the ChatGPT desktop app runs the server exe: close them, then install. Test a new exe meanwhile with `run_exe_check_dist.bat` |
+| Revit's Open dialog refuses typed paths from computer use | Open models from Revit Home > Recent (list view) |
+| install.bat stops because Claude Desktop is running, but quitting it cuts the computer link | Use `tests\run_install_claude_open.bat` (/claude_open); the settings are already written |
+| A value of a spec other than Length (bar diameter, cover, spacing) in display units | Classify by spec dimension with U.KindOf / OutSpec / InSpec, never by comparing to SpecTypeId.Length (fixed 0.18.1) |
+| A dry run said OK but the real run was rolled back by Revit | Revit checks failures only at commit: dry runs commit inside a rolled-back TransactionGroup (not on workshared models) |
+| HVAC duct types in the office models route with tees, not taps; a takeoff whose branch ends inside the main is refused | mep_connect ends the branch on the main's centerline, tries a tap, else splits the main (BreakCurve) and adds a tee |
+| One MEP system holds one classification; equipment has supply, return and sanitary connectors | mep_system_create keeps the connectors of the system type's classification and lists the rest |
+| "The base connector has been used" | The base equipment's connector is the source, never also a member: it is taken out of the set; a system needs one more element |
+| A terminal's built-in flow parameter does not drive its connector in some families (the value stays the family default) | air_terminal_place writes the instance "Flow" parameter that drives the connector and checks the connector flow; a type-driven flow is reported |
+| A terminal connected to a main lands in a new default system ("Mechanical Supply Air n") | Add it to the main's system before connecting; read the membership after commit (models can hold two systems on one network) |
+| Revit refuses to remove the last element of a system | mep_system_remove refuses first with a clear message |
+| Revit 2027 removed Document.Create.NewZone / Zone.AddSpaces (GenericZone instead) | hvac_zone_create refuses on 2027 until GenericZone is built and tested |
+| Revit's NewFamilyInstance(point, accessory, duct host) places the damper but neither breaks nor connects the run | mep_accessory_place splits the run (BreakCurve), places the accessory, lines it up, trims both pieces to its connectors and connects them (0.28.0) |
+| An accessory placed that way keeps the family's size | It is sized through MEPFamilyConnectorInfo.GetAssociateFamilyParameterId (instance parameters only); a size on a type parameter (e.g. valve types per DN) is reported, not changed |
+| A system's DuctNetwork / PipingNetwork includes equipment and terminals | Filter to ducts, pipes, fittings and accessories before adding insulation |
+| The detached arch model links into the HV copy only origin to origin ("do not share the same coordinate system"); its walls then cross no duct | Tests draw their own duct through a linked wall (get_elements with link, location and box) |
+| InsulationLiningBase.GetLiningIds throws for pipes ("not a duct, fitting or accessory") | Ask for lining only on the duct side (ducts, flex ducts, duct fittings and accessories) and catch the rest |
+| An element's electrical circuits are not on its connectors' MEPSystem | MEPModel.GetElectricalSystems() (ElectricalRead.CircuitsOf) |
+| Cable trays and conduits have no BreakCurve | SplitRun: copy the run, shorten both, reconnect what the far end held, then NewTeeFitting |
+| A sprinkler joint (tap, or tee 50 x 15) depends on the pipe type's routing preferences; the KTR15 FF types have neither | The op reports it and rolls back; the engineer picks a type that has the fitting (Standard worked) |
+| Face-based floor families (floor drains) need a plane facing up | mep_fixture_place face: up |
+| A level-based family turns only about the vertical | sleeve_place refuses a tilt and says which axis to use |
+| C:\ProgramData\Autodesk\RVT 2024 is not a connected folder (access declined) | Test with the families inside the detached KTR15 copies |
+| install.bat: "server copy" fails while the ChatGPT desktop app is open | ChatGPT also runs revit-mcp-server.exe: quit it (and Claude Desktop, or use run_install_claude_open.bat), then install |
+| Claude Desktop 6.x does not show the revit server although install says "already configured" | 6.x reads %LOCALAPPDATA%\Claude-Data\claude_*\claude_desktop_config.json; --configure-clients writes it since 0.26.5 (as the CSI packages do) |
+| Codex or the ChatGPT desktop app stops a long edit or batch read after 60 s | Their default tool_timeout_sec is 60: the installer sets 3600 (and startup_timeout_sec 30) in ~/.codex/config.toml, which both read |
+| "No elbow" right after a connector: the first point a hair off its axis made a stub and a near-straight joint | mep_route snaps a first point within 2 degrees of the connector axis onto it (0.27.0) |
+| Revit rolls back a route at commit: "modified to be in the opposite direction" | A segment next to an elbow is shorter than the elbow: give longer segments (about 1.5 x the duct size or more) |
+| A rectangular run out of a vertical connector twists at the elbow | Turn along the connector's heightAxis (mep_connectors); mep_route also retries the elbow with width and height swapped |
+| A dry run on Task 04 succeeds for fabric but makes 0 kg sheets | Task 04 has no fabric wire types; wireless sheet types are refused since 0.19.0 |
+| Each Revit restart needs Mohamed to allow editing again | Plan test runs so scratch and Task 04 runs share one Revit session (close Task 04, Ctrl+N, run, discard, reopen Task 04) |
+| Claude Desktop does not know new operations after an install | Its server exe was started earlier: test straight to the add-in with the tests\*.bat scripts |
+| Revit 2027 window blank and bridge 'busy' after start | The Home page takes about 2 minutes; wait, then Models > New (84, 150), OK (644, 466); close button at (1361, 13) |
+| The KTR15 federated model | Desktop\\New folder\\detached\\detached\\...Federated Model.rvt: a detached, non-workshared local copy; reads only (treat as KTR15). Open it from Revit Home > Recent in list view (hover to check the path: two rows look alike) |
+| Opening models from Claude | model_open always detaches workshared files; model_close closes only models Claude opened and never the active one; model_new active writes a scratch file in %TEMP%\\RevitMcpScratch (tests can now make their own scratch project instead of Ctrl+N) |
+| Syncing | Only the cloud test model KTR15-G26-Z2-X-S-RC-RFT-ZZ-20100-00 (Mohamed's throwaway, confirmed 26 Nov 2026). Every other KTR15 model: never sync. Cloud models need save-local on sync. Closing a cloud model with local changes: 'Do not save the project', then 'Relinquish all elements and worksets' leaves the cloud unchanged |
+| Detached copies of KTR15 models | Real edits only in a copy Mohamed detached and never saved, and only with his OK for that copy; close it with No. A copy detached with worksets discarded is not workshared |
+| The Claude app's MCP server predates an install | It refuses new actions ('Unknown action'); use a test script started by a .bat, or ask Mohamed to restart the Claude app |
+| A bridge call waits while Revit shows a modal dialog | The permission probe blocks until Mohamed answers; a test started while he is away simply waits. Tell him before starting, and do not count the wait as a failure |
+| Optional list arguments | Args.StrList(..., required: false) returns an empty list, not null: check Has(p, name) or Count > 0 |
+| One edit approval for a whole test night | Do all runs in one Revit session: Task 04 dry runs, scratch projects (Ctrl+N, discard), federated reads; never restart Revit and never use open_application to bring Revit forward |
+| The view tab's X does not close a model | Use File > Close; on a scratch project answer No to saving |
+| Other assistants (ChatGPT, Codex) edit this folder or a copy of it | Diff against the GitHub release before building; their audit files are docs/PROTOCOL_AUDIT.md and docs/0.17.0-AUDIT-CHANGES.md |
 | install.bat run elevated under another account installs into that account's profile | install.bat stops unless the account is the desktop user (`/this_user` overrides) |
 
 ## Roadmap and open checks
 
-Phases 8 and 9 are built (0.17.0) and tested live in Revit 2024. Phase 6 is in progress: reading elements inside
-linked Revit models is built (0.16.0, `link` parameter on six read actions, `LinkScope`). Next in phase 6: link management (reload, unload, path, pin; size S, also lets the not-loaded
-error be tested), base / survey point and shared coordinates read (S), annotation values (S), then clash against a
-link (L, uses `LinkScope` and `Geo`). Full list with priority and effort: `ROADMAP.md`.
+Phases 6 (0.16.0 / 0.18.0), 8 and 9 (0.17.0) are built and tested live in Revit 2024; phase 7 is built in part
+(0.19.0: path and fabric reinforcement, hooks, couplers, rebar annotation). Next: phase 7's rest (sloped / curved
+members, Revit 2027 splices and numbering), then phase 15 P1 (ray casting) and phase 16 P1 (open / close models,
+batch reads). Full list with priority and effort: `ROADMAP.md`.
 
 | Phase | Content | Priority | Effort |
 | --- | --- | --- | --- |

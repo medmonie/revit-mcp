@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
+from request_lifetime import checkpoint
 
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -13,11 +14,48 @@ HEAD_FILL = PatternFill("solid", fgColor="1F3864")
 HEAD_FONT = Font(bold=True, color="FFFFFF")
 
 
+def allowed_roots() -> list[str]:
+    """Folders the workbooks may be read from and written to: one per line in allowed_roots.txt next to bridge.json
+    (# starts a comment). No file, or no folder in it: no restriction. The add-in applies the same file to every path
+    it is given (plugin/Core/PathPolicy.cs)."""
+    from bridge_client import BridgeError, bridge_file
+    try:
+        listing = bridge_file().parent / "allowed_roots.txt"
+    except BridgeError:     # no data folder on this machine: there is no list
+        return []
+    try:
+        lines = listing.read_text(encoding="utf-8-sig").splitlines()
+    except FileNotFoundError:
+        return []
+    except (OSError, UnicodeError) as exc:      # an unreadable list must not open everything up
+        raise ValueError(f"The allowed folders list {listing} cannot be read: {exc}") from None
+    roots = []
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith("#"):
+            roots.append(os.path.normcase(os.path.abspath(os.path.expandvars(line))).rstrip("\\/") + os.sep)
+    return roots
+
+
+def check_allowed(path: Path) -> None:
+    text = str(path)
+    if text.startswith(("\\\\?\\", "\\\\.\\")):
+        raise ValueError("'path' must be an ordinary file path, not a device path.")
+    roots = allowed_roots()
+    if not roots:
+        return
+    candidate = os.path.normcase(os.path.abspath(text)).rstrip("\\/") + os.sep
+    if not any(candidate.startswith(root) for root in roots):
+        raise ValueError(f"'{path}' is outside the folders Claude may use on this PC ({'; '.join(r.rstrip(os.sep) for r in roots)}). "
+                         "To allow another folder, add it to allowed_roots.txt in %LOCALAPPDATA%\\RevitMcpBridge.")
+
+
 def xlsx_path(params: dict[str, Any], must_exist: bool) -> Path:
     """params['path'] as a full .xlsx path; an existing file is refused unless overwrite is true (when writing)."""
     path = Path(str(params.get("path") or ""))
     if not path.is_absolute() or path.suffix.lower() != ".xlsx":
         raise ValueError("'path' must be a full path ending in .xlsx, e.g. C:\\Projects\\KTR15\\QS.xlsx")
+    check_allowed(path)
     if must_exist and not path.exists():
         raise ValueError(f"'{path}' does not exist.")
     if not must_exist and path.exists() and not flag(params, "overwrite"):
@@ -40,12 +78,14 @@ def literal_cell(ws, row: int, column: int, value: Any):
 
 
 def save_workbook(wb, path: Path, params: dict[str, Any]) -> None:
+    checkpoint()
     overwrite = flag(params, "overwrite")
     path.parent.mkdir(parents=True, exist_ok=True)
     with NamedTemporaryFile(dir=path.parent, suffix=".xlsx", delete=False) as stage:
         temporary = Path(stage.name)
     try:
         wb.save(temporary)
+        checkpoint()
         if overwrite:
             os.replace(temporary, path)
         elif os.name == "nt":

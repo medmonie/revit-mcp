@@ -270,7 +270,7 @@ def params_from_excel(call: Callable[..., Any], params: dict[str, Any], target: 
                                 "operationId": exc.operation_id, "pid": exc.pid, "planned": len(batch)})
                 break
             summary = ("applied", "dryRun", "previewSucceeded", "permission", "reason", "failedAt", "error", "errors",
-                       "regenerationError", "warnings", "operationId", "pid", "state")
+                       "regenerationError", "trialCommit", "revitErrors", "warnings", "operationId", "pid", "state")
             results.append({"planned": len(batch), **{k: res[k] for k in summary if k in res}})
             if res.get("applied"):
                 applied += len(batch)
@@ -333,6 +333,9 @@ def _rows(wb, name: str) -> list[tuple[int, dict[str, Any]]]:
         return []
     ws = wb[name]
     headers = [str(c.value).strip().lower() if c.value is not None else "" for c in ws[1]]
+    named = [h for h in headers if h]
+    if len(named) != len(set(named)):
+        raise ValueError(f"{name}: duplicate column headers.")
     out = []
     for i, r in enumerate(ws.iter_rows(min_row=2, values_only=True), 2):
         if r and any(v not in (None, "") for v in r):

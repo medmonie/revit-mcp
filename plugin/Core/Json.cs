@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Reflection;
+using System.Text.RegularExpressions;
 
 namespace RevitMcpBridge;
 
@@ -12,6 +13,8 @@ namespace RevitMcpBridge;
 internal static class Json
 {
     private const int MaxDepth = 64;
+    private static readonly Regex NumberToken = new Regex(@"\G-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?",
+        RegexOptions.CultureInvariant);
 
     // ------------------------------------------------------------------ read
 
@@ -77,10 +80,11 @@ internal static class Json
         if (Word(s, ref i, "false")) return false;
         if (Word(s, ref i, "null")) return null;
 
-        int start = i;
-        while (i < s.Length && (char.IsDigit(s[i]) || s[i] == '-' || s[i] == '+' || s[i] == '.' || s[i] == 'e' || s[i] == 'E')) i++;
-        if (i == start || !double.TryParse(s.Substring(start, i - start), NumberStyles.Float, CultureInfo.InvariantCulture, out double d))
-            throw new FormatException("invalid JSON value at position " + start);
+        var token = NumberToken.Match(s, i);
+        if (!token.Success || !double.TryParse(token.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double d)
+            || double.IsInfinity(d))
+            throw new FormatException("invalid or unsupported JSON number at position " + i);
+        i += token.Length;
         return d;
     }
 
@@ -100,6 +104,7 @@ internal static class Json
             if (i >= s.Length) throw new FormatException("unterminated string");
             char c = s[i++];
             if (c == '"') return sb.ToString();
+            if (c < ' ') throw new FormatException("unescaped control character");
             if (c != '\\') { sb.Append(c); continue; }
             if (i >= s.Length) throw new FormatException("unterminated string");
             char e = s[i++];
@@ -114,7 +119,7 @@ internal static class Json
                 case 'r': sb.Append('\r'); break;
                 case 't': sb.Append('\t'); break;
                 case 'u':
-                    if (i + 4 > s.Length || !ushort.TryParse(s.Substring(i, 4), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ushort code))
+                    if (i + 4 > s.Length || !ushort.TryParse(s.Substring(i, 4), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out ushort code))
                         throw new FormatException("invalid \\u escape");
                     sb.Append((char)code);
                     i += 4;

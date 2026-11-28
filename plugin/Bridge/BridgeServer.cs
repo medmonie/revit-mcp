@@ -24,6 +24,12 @@ internal static class BridgeServer
     private const int IdleTimeoutMs = 10 * 60 * 1000;           // idle connections are dropped
     private const int MaxConnections = 16;
     private static int _connections;
+    private static readonly int Pid = CurrentPid();
+
+    private static int CurrentPid()
+    {
+        using (var p = Process.GetCurrentProcess()) return p.Id;
+    }
 
     private static TcpListener _listener;
     private static volatile bool _running;
@@ -36,7 +42,7 @@ internal static class BridgeServer
     private static string BridgeFile => IOPath.Combine(BridgeInfo.DataFolder, "bridge.json");
 
     /// <summary>One file per running Revit, so Claude can list them and pick one (2024 and 2027 open together).</summary>
-    private static string SessionFile => IOPath.Combine(BridgeInfo.DataFolder, "sessions", Process.GetCurrentProcess().Id + ".json");
+    private static string SessionFile => IOPath.Combine(BridgeInfo.DataFolder, "sessions", Pid + ".json");
 
     public static void Start(string revitVersion)
     {
@@ -59,7 +65,9 @@ internal static class BridgeServer
         }
         catch { /* listing sessions is a convenience */ }
         // A second Revit must not take over from one that is already open: Claude would silently switch models.
-        if (!BridgeFileOwnerRunning()) WriteBridgeFile();
+        // A lock held too long by another Revit must not stop this one's bridge: MCP Status can still make it the default.
+        try { UpdateDefault(() => { if (!BridgeFileOwnerRunning()) Publish(BridgeFile); }); }
+        catch (TimeoutException) { }
 
         new Thread(AcceptLoop) { IsBackground = true, Name = "RevitMcpBridge accept" }.Start();
     }
@@ -68,8 +76,22 @@ internal static class BridgeServer
     public static void WriteBridgeFile()
     {
         if (_listener == null) return;
+        UpdateDefault(() => Publish(BridgeFile));
+    }
+
+    private static void UpdateDefault(Action update)
+    {
         Directory.CreateDirectory(BridgeInfo.DataFolder);
-        Publish(BridgeFile);
+        using (var user = System.Security.Principal.WindowsIdentity.GetCurrent())
+        using (var mutex = new Mutex(false, @"Global\RevitMcpBridge.Default." + user.User.Value))
+        {
+            bool owned;
+            try { owned = mutex.WaitOne(TimeSpan.FromSeconds(5)); }
+            catch (AbandonedMutexException) { owned = true; }
+            if (!owned) throw new TimeoutException("Another Revit process is updating the default bridge.");
+            try { update(); }
+            finally { mutex.ReleaseMutex(); }
+        }
     }
 
     private static void Publish(string path)
@@ -90,7 +112,7 @@ internal static class BridgeServer
 
     private static string Connection() => Json.Write(new Obj
     {
-        ["port"] = Port, ["token"] = _token, ["pid"] = Process.GetCurrentProcess().Id,
+        ["port"] = Port, ["token"] = _token, ["pid"] = Pid,
         ["revit"] = _revitVersion, ["startedUtc"] = _startedUtc, ["protocol"] = 4,
     });
 
@@ -104,7 +126,7 @@ internal static class BridgeServer
         catch { return null; }
     }
 
-    private static bool BridgeFileIsMine() => FilePid(BridgeFile) == Process.GetCurrentProcess().Id;
+    private static bool BridgeFileIsMine() => FilePid(BridgeFile) == Pid;
 
     /// <summary>True when the process is a running Revit (a pid of a closed Revit may be reused by another program).</summary>
     private static bool RevitRunning(int pid)
@@ -120,7 +142,7 @@ internal static class BridgeServer
     private static bool BridgeFileOwnerRunning()
     {
         int? pid = File.Exists(BridgeFile) ? FilePid(BridgeFile) : null;
-        return pid.HasValue && pid.Value != Process.GetCurrentProcess().Id && RevitRunning(pid.Value);
+        return pid.HasValue && pid.Value != Pid && RevitRunning(pid.Value);
     }
 
     /// <summary>Session files left by a Revit that crashed or was killed (OnShutdown never ran).</summary>
@@ -137,7 +159,7 @@ internal static class BridgeServer
     private static void HandOver()
     {
         string folder = IOPath.GetDirectoryName(SessionFile);
-        int me = Process.GetCurrentProcess().Id;
+        int me = Pid;
         if (Directory.Exists(folder))
         {
             foreach (string f in Directory.GetFiles(folder, "*.json").OrderBy(File.GetLastWriteTimeUtc))
@@ -163,7 +185,7 @@ internal static class BridgeServer
         try { _listener?.Stop(); } catch { /* shutting down */ }
         _listener = null;
         try { if (File.Exists(SessionFile)) File.Delete(SessionFile); } catch { /* best effort */ }
-        try { if (File.Exists(BridgeFile) && BridgeFileIsMine()) HandOver(); } catch { /* best effort */ }
+        try { UpdateDefault(() => { if (BridgeFileIsMine()) HandOver(); }); } catch { /* best effort */ }
     }
 
     public static string Describe() => _listener == null
@@ -174,25 +196,61 @@ internal static class BridgeServer
                               : "Another open Revit is Claude's default.\n") +
           $"Connection details: {BridgeFile}\nAudit log: {Audit.FilePath}";
 
+    private const int MaxAcceptFailures = 50;   // in a row
+
     private static void AcceptLoop()
     {
-        while (_running)
+        var listener = _listener;
+        int failures = 0;
+        while (_running && listener != null)
         {
             TcpClient client;
-            try { client = _listener.AcceptTcpClient(); }
-            catch { break; }   // listener stopped
+            try
+            {
+                client = listener.AcceptTcpClient();
+                failures = 0;
+            }
+            catch (SocketException ex) when (_running && failures < MaxAcceptFailures)
+            {
+                // A single connection that failed before it was accepted (reset by the caller, no buffers for a moment)
+                // must not end the bridge for the rest of the Revit session: note it, wait briefly, keep listening.
+                failures++;
+                if (failures == 1) Audit.Write("bridge_accept_error", new { error = ex.SocketErrorCode.ToString() });
+                Thread.Sleep(Math.Min(1000, 20 * failures));
+                continue;
+            }
+            catch (Exception ex)
+            {
+                if (_running)
+                {
+                    // Not a shutdown: stop cleanly, so the MCP server reports "not reachable" at once instead of
+                    // waiting on a port that still accepts connections but is no longer served.
+                    Audit.Write("bridge_stopped", new { error = ErrorText(ex) });
+                    Stop();
+                }
+                break;
+            }
             if (Interlocked.Increment(ref _connections) > MaxConnections)
             {
                 Interlocked.Decrement(ref _connections);
                 client.Close();
                 continue;
             }
-            var thread = new Thread(() =>
+            try
             {
-                try { HandleClient(client); }
-                finally { Interlocked.Decrement(ref _connections); }
-            }) { IsBackground = true, Name = "RevitMcpBridge client" };
-            thread.Start();
+                var thread = new Thread(() =>
+                {
+                    try { HandleClient(client); }
+                    finally { Interlocked.Decrement(ref _connections); }
+                }) { IsBackground = true, Name = "RevitMcpBridge client" };
+                thread.Start();
+            }
+            catch (Exception)
+            {
+                // The thread never started (out of memory / handles): give the slot and the socket back.
+                Interlocked.Decrement(ref _connections);
+                client.Close();
+            }
         }
     }
 
@@ -204,13 +262,24 @@ internal static class BridgeServer
             using (var stream = client.GetStream())
             {
                 stream.ReadTimeout = IdleTimeoutMs;
+                stream.WriteTimeout = IdleTimeoutMs;
                 var utf8 = new UTF8Encoding(false);
                 var reader = new StreamReader(stream, utf8, false, 16 * 1024);
                 string line;
-                while (_running && (line = ReadLine(reader)) != null)
+                try
                 {
-                    if (line.Length == 0) continue;
-                    byte[] reply = utf8.GetBytes(Handle(line) + "\n");
+                    while (_running && (line = ReadLine(reader)) != null)
+                    {
+                        if (line.Length == 0) continue;
+                        byte[] reply = utf8.GetBytes(Handle(line) + "\n");
+                        stream.Write(reply, 0, reply.Length);
+                        stream.Flush();
+                    }
+                }
+                catch (InvalidDataException)
+                {
+                    // Tell the caller why instead of dropping the connection; the rest of the line is not read.
+                    byte[] reply = utf8.GetBytes(Error(null, $"request too large (limit {MaxRequestChars / (1024 * 1024)} MB per request); split the batch") + "\n");
                     stream.Write(reply, 0, reply.Length);
                     stream.Flush();
                 }
@@ -226,7 +295,7 @@ internal static class BridgeServer
         while (true)
         {
             int c = reader.Read();
-            if (c < 0) return sb.Length == 0 ? null : sb.ToString();
+            if (c < 0) return null;
             if (c == '\n') return sb.ToString().TrimEnd('\r');
             sb.Append((char)c);
             if (sb.Length > MaxRequestChars) throw new InvalidDataException("request too large");
@@ -268,20 +337,47 @@ internal static class BridgeServer
             bool edit = action.Kind == "write";
             object RunOnMainThread(Action started) => MainThread.Run(app =>
             {
-                started?.Invoke();
-                var rc = new Rc(app);
-                DocumentTarget.Verify(rc, args, required: edit);
+                var rc = new Rc(app) { Started = started };
+                DocumentTarget.Verify(rc, args, required: edit);   // a wrong model is refused before the edit counts as running
+                if (action.Kind != "write") started?.Invoke();      // write actions mark it themselves, after their own checks
                 return action.Run(rc, args);
             }, QueueTimeout);
 
             object result = !action.MainThread ? action.Run(null, args)
                 : edit ? EditReceipts.Run(args, RunOnMainThread) : RunOnMainThread(null);
-            return Json.Write(new Obj { ["id"] = reqId, ["ok"] = true, ["result"] = result });
+            var reply = new Obj { ["id"] = reqId, ["ok"] = true, ["result"] = result };
+            var unread = UnreadKeys(args);
+            if (unread != null) reply["unread"] = unread;   // outside "result": no result shape changes
+            return Json.Write(reply);
         }
         catch (Exception ex)
         {
             return Error(reqId, ErrorText(ex));
         }
+    }
+
+    /// <summary>
+    /// Keys of the request (and of each edit operation) that the handler never asked for. The MCP server reports the
+    /// ones its catalogue does not know either as ignoredParams, so a misspelled option is no longer silent.
+    /// </summary>
+    private static Obj UnreadKeys(Obj args)
+    {
+        try
+        {
+            var found = new Obj();
+            var top = Unread(args);
+            if (top.Count > 0) found["params"] = top;
+            if (args.TryGetValue("operations", out var raw) && raw is List<object> ops)
+            {
+                var byOperation = new Obj();
+                for (int i = 0; i < ops.Count; i++)
+                    if (ops[i] is Obj op && Unread(op) is List<string> keys && keys.Count > 0)
+                        byOperation[(i + 1).ToString(CultureInfo.InvariantCulture)] = keys;
+                if (byOperation.Count > 0) found["operations"] = byOperation;
+            }
+            return found.Count > 0 ? found : null;
+        }
+        catch { return null; }   // a hint only: never fail a finished request over it
     }
 
     private static string Error(string id, string message) =>

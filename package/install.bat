@@ -5,10 +5,26 @@ setlocal
 cd /d "%~dp0"
 set "LOG=%~dp0install_result.txt"
 echo Revit MCP bridge install  %DATE% %TIME% > "%LOG%"
+rem Options: /this_user (install for the account running this window), /claude_open (do not stop for Claude Desktop)
+set "THIS_USER=" & set "CLAUDE_OPEN="
+for %%A in (%*) do (
+  if /i "%%~A"=="/this_user" set "THIS_USER=1"
+  if /i "%%~A"=="/claude_open" set "CLAUDE_OPEN=1"
+)
 
 tasklist /fi "imagename eq Revit.exe" | find /i "Revit.exe" >nul && (
   echo Revit is running. Close Revit and run install.bat again.
   echo RESULT=STOPPED: Revit running >> "%LOG%"
+  pause
+  exit /b 1
+)
+rem Claude Desktop keeps its settings in memory and can write them back over the "revit" entry added here; it also
+rem holds the server exe open. Quit it first (tray icon > Quit), then start it again after installing.
+if not defined CLAUDE_OPEN tasklist /fi "imagename eq claude.exe" | find /i "claude.exe" >nul && (
+  echo Claude is running ^(Claude Desktop, or Claude Code: also claude.exe^). Quit Claude Desktop completely
+  echo ^(tray icon ^> Quit^), then run install.bat again.
+  echo It is started again after the install. ^(install.bat /claude_open installs anyway.^)
+  echo RESULT=STOPPED: Claude Desktop running >> "%LOG%"
   pause
   exit /b 1
 )
@@ -23,7 +39,7 @@ rem The files go into the profile of the account running this script; stop when 
 rem (e.g. "Run as administrator" with another account's credentials). install.bat /this_user skips the check.
 echo Installing for %USERDOMAIN%\%USERNAME%  (%USERPROFILE%)
 echo ACCOUNT %USERDOMAIN%\%USERNAME% >> "%LOG%"
-if /i "%~1"=="/this_user" goto :user_ok
+if defined THIS_USER goto :user_ok
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0check_user.ps1" >> "%LOG%" 2>&1
 if errorlevel 2 goto :other_user
 :user_ok
@@ -53,17 +69,36 @@ copy /y "revit-mcp-server.exe" "%SRV%\" >> "%LOG%" 2>&1 || (
 set "EXE=%SRV%\revit-mcp-server.exe"
 echo SERVER %EXE% >> "%LOG%"
 
-rem Snippets for clients that are set up by hand (ChatGPT desktop, other PCs).
+rem Snippets for clients set up by hand (other PCs). Codex and the ChatGPT desktop app share ~/.codex/config.toml.
 > "%SRV%\claude_desktop_config_snippet.json" echo { "mcpServers": { "revit": { "command": "%EXE:\=\\%" } } }
 > "%SRV%\codex_mcp_config_snippet.toml" echo [mcp_servers.revit]
 >> "%SRV%\codex_mcp_config_snippet.toml" echo command = "%EXE:\=\\%"
+>> "%SRV%\codex_mcp_config_snippet.toml" echo startup_timeout_sec = 30
+>> "%SRV%\codex_mcp_config_snippet.toml" echo tool_timeout_sec = 3600
+>> "%SRV%\codex_mcp_config_snippet.toml" echo.
+>> "%SRV%\codex_mcp_config_snippet.toml" echo [mcp_servers.revit.env]
+>> "%SRV%\codex_mcp_config_snippet.toml" echo REVIT_MCP_SPLIT = "1"
 
 rem ---------------------------------------------------------------- MCP clients
 echo.
 echo Connecting MCP clients:
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0configure_clients.ps1" -Exe "%EXE%"
-echo CLIENTS configure_clients.ps1 exit %ERRORLEVEL% >> "%LOG%"
+rem Done by the server exe (Python): unlike a PowerShell script it is not blocked by company script policies.
+set "CLIENTS=%TEMP%\revitmcp_clients_%RANDOM%.txt"
+"%~dp0revit-mcp-server.exe" --configure-clients "%EXE%" > "%CLIENTS%" 2>&1
+set "CRC=%ERRORLEVEL%"
+type "%CLIENTS%"
+type "%CLIENTS%" >> "%LOG%"
+del /q "%CLIENTS%" 2>nul
+echo CLIENTS exit %CRC% >> "%LOG%"
+set "CLIENTS_OK=1"
+if not "%CRC%"=="0" (
+  set "CLIENTS_OK="
+  echo.
+  echo Some MCP client settings could not be changed ^(see above^). Add the revit entry by hand:
+  echo   %SRV%\claude_desktop_config_snippet.json shows it.
+)
 echo RESULT=OK >> "%LOG%"
+if not defined CLIENTS_OK echo NOTE: MCP client settings not (all) changed - add the revit entry by hand >> "%LOG%"
 
 echo.
 echo Installed.
@@ -75,7 +110,7 @@ echo Next:
 echo   1. Fully quit Claude Desktop (tray icon ^> Quit) and start it again.
 echo   2. Start Revit. When it asks about loading "Revit MCP bridge", choose Always Load.
 echo   3. Open a model and ask Claude: "Ping Revit and tell me which model is open."
-echo ChatGPT desktop: Settings ^> MCP servers ^> Add server, name revit, STDIO, command = the server path above.
+echo ChatGPT desktop app: it reads the Codex settings above ^(~/.codex/config.toml^); restart it to see revit under Settings ^> MCP servers.
 pause
 exit /b 0
 

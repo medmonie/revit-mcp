@@ -14,13 +14,7 @@ internal static class DataRead
             case IntegerParameterValue i: return DataOps.Is(spec, SpecTypeId.Boolean.YesNo) ? (object)(i.Value != 0) : i.Value;
             case ElementIdParameterValue e: return e.Value == ElementId.InvalidElementId ? null : new { id = e.Value.Value, name = doc.GetElement(e.Value)?.Name };
             case DoubleParameterValue d:
-                if (DataOps.Is(spec, SpecTypeId.Length)) return U.Out(d.Value);
-                if (DataOps.Is(spec, SpecTypeId.Area)) return U.Area(d.Value);
-                if (DataOps.Is(spec, SpecTypeId.Volume)) return U.Volume(d.Value);
-                if (DataOps.Is(spec, SpecTypeId.Angle)) return U.Deg(d.Value);
-                if (spec != null && UnitUtils.IsMeasurableSpec(spec))
-                    return Math.Round(UnitUtils.ConvertFromInternalUnits(d.Value, doc.GetUnits().GetFormatOptions(spec).GetUnitTypeId()), 6);
-                return Math.Round(d.Value, 9);
+                return U.OutSpec(d.Value, spec, U.ProjectUnit(doc, spec));
             default: return null;
         }
     }

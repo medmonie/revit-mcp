@@ -64,6 +64,9 @@ async def single_tool(bridge_file: Path) -> None:
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools = (await session.list_tools()).tools
+            await expect_error(session, "select_revit", {"pid": 1.5}, "process ID")
+            await expect_error(session, "edit", {"dry_run": None, "operations": [{"op": "save"}]}, "dry_run")
+            await expect_error(session, "edit", {"dryRun": True, "operations": [{"op": "save"}]}, "Unknown edit")
             assert [t.name for t in tools] == ["revit"], [t.name for t in tools]
             desc = tools[0].description
             for name in list(catalog.READ_ACTIONS) + list(catalog.EDIT_OPS) + list(catalog.LOCAL_ACTIONS):
@@ -108,6 +111,24 @@ async def single_tool(bridge_file: Path) -> None:
             assert receipt["state"] == "completed" and receipt["result"]["modelEditCount"] == 1, receipt
             await expect_error(session, "edit", {**batch, "operations": [{"op": "save"}]}, "different request")
             assert (await run(session, "ping"))["editingAllowed"] is True   # granted once, stays granted
+            # without an id: the writes this server dispatched, so a client that lost a reply can find its edit
+            recent = (await run(session, "get_operation_status"))["operations"]
+            mine = [o for o in recent if o["operationId"] == batch["operation_id"]]
+            assert [o["state"] for o in mine] == ["rejected", "answered", "answered"], mine   # newest first: reuse refused, replay, edit
+            assert mine[-1]["applied"] is True and mine[-1]["replyDelivered"] is True and "revit" not in mine[0], mine
+            # a misspelled option is reported, a documented one is not (the fake bridge lists every key as unread)
+            levels = await run(session, "list_levels", {"units": "m", "limt": 5})
+            assert levels["ignoredParams"]["params"] == ["limt"], levels
+            assert "ignoredParams" not in await run(session, "list_levels", {"units": "m"})
+            typo = await run(session, "edit", {"dry_run": True, "operations": [
+                {"op": "level_create", "name": "T1", "elevation": 1000}, {"op": "level_create", "name": "T2", "elevation": 2000, "if_exist": "skip"}]})
+            assert typo["ignoredParams"]["operations"] == [{"operation": 2, "op": "level_create", "params": ["if_exist"]}], typo
+            grouped = await run(session, "help", {"topic": "Quantities"})
+            assert "takeoff" in grouped["Quantities"]["entries"], grouped
+            several = await run(session, "help", {"topic": ["takeoff", "column_create"]})
+            assert set(several) == {"takeoff", "column_create"}, several
+            big = {"operations": [{"op": "column_create", "points": [[1.0, 2.0]] * 500000}]}
+            assert "Nothing was sent" in await expect_error(session, "edit", edit_request(big), "4 MB")
             print("edit path ok (permission granted once, then reused)")
 
             with tempfile.TemporaryDirectory() as out:
@@ -126,6 +147,24 @@ async def single_tool(bridge_file: Path) -> None:
                 await expect_error(session, "qs_report", {"path": str(xlsx)}, "already exists")
                 await expect_error(session, "qs_report", {"path": "relative.xlsx"}, "full path")
             print("qs_report ok: concrete classification, formulas, overlap review and overwrite protection")
+
+            with tempfile.TemporaryDirectory() as out:
+                xlsx = Path(out) / "MEP.xlsx"
+                rep = await run(session, "mep_report", {"path": str(xlsx)})
+                assert xlsx.exists() and rep["totalsByCategoryM"] == {"Ducts": 12.5, "Pipes": 4.0}, rep
+                assert rep["sheets"] == ["Summary", "By system", "By size", "By type", "By level", "Fittings and devices", "Insulation",
+                                         "Panels", "Circuits", "Not on a circuit", "Notes"], rep["sheets"]
+                assert any("neither insulation nor lining" in w for w in rep["warnings"]) and any("on no circuit" in w for w in rep["warnings"]), rep
+                from openpyxl import load_workbook
+                wb = load_workbook(xlsx)
+                assert wb["Summary"]["B11"].value.startswith("=SUMIF('By system'!A2:A3,A11"), wb["Summary"]["B11"].value   # live formulas
+                assert wb["By system"]["D4"].value == "=SUM(D2:D3)", wb["By system"]["D4"].value
+                assert wb["Fittings and devices"]["B2"].value == "Fire Damper : Std"
+                assert wb["Circuits"]["E2"].value == "Sockets"
+                lean = await run(session, "mep_report", {"path": str(Path(out) / "MEP2.xlsx"), "insulation": False, "electrical": False})
+                assert "Insulation" not in lean["sheets"] and "Panels" not in lean["sheets"], lean["sheets"]
+                await expect_error(session, "mep_report", {"path": str(xlsx)}, "already exists")
+            print("mep_report ok: runs by system / size / type / level, counts, insulation, electrical, formulas, overwrite protection")
 
             with tempfile.TemporaryDirectory() as out:
                 from openpyxl import load_workbook
@@ -201,6 +240,18 @@ async def split_tools(bridge_file: Path) -> None:
             await session.initialize()
             tools = sorted(t.name for t in (await session.list_tools()).tools)
             assert tools == ["revit_edit", "revit_read"], tools
+            bad = await session.call_tool("revit_edit", {"worksharing_action": "reload_latest", "dry_run": True})
+            assert bad.isError and "no dry run" in bad.content[0].text
+            for action in catalog.WORKSHARE_ACTIONS:
+                args = {"worksharing_action": action, "worksharing_params": {"confirm": True} if action in
+                        ("sync_with_central", "relinquish") else ({"ids": [1001]} if action == "checkout" else {})}
+                result = parse(await session.call_tool("revit_edit", args))
+                assert result["method"] == action and result["operationId"]
+            bad = await session.call_tool("revit_edit", {"dryRun": True, "operations": [{"op": "save"}]})
+            assert bad.isError and "additionalProperties" in bad.content[0].text
+            bad = await session.call_tool("revit_edit", {"excel_action": "excel_to_model", "path": "x.xlsx",
+                                                        "operations": [{"op": "save"}]})
+            assert bad.isError and "Choose one" in bad.content[0].text
             res = await session.call_tool("revit_read", {"action": "edit", "params": {"operations": [{"op": "save"}]}})
             assert res.isError, "the read tool must refuse edits"
             res = await session.call_tool("revit_read", {"action": "excel_to_model", "params": {"path": "C:/x.xlsx"}})
@@ -226,6 +277,68 @@ async def switched_document(bridge_file: Path) -> None:
             await session.initialize()
             await expect_error(session, "edit", {"operations": [{"op": "save"}]}, "does not match document_id")
             assert (await run(session, "get_edit_permission"))["editingAllowed"] is False
+
+
+async def rollback(bridge_file: Path) -> None:
+    async with stdio_client(server_params(bridge_file)) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            args = edit_request({"operations": [{"op": "save"}]})
+            message = await expect_error(session, "edit", args, "fixture rollback")
+            assert args["operation_id"] in message
+
+
+async def postcommit(bridge_file: Path) -> None:
+    async with stdio_client(server_params(bridge_file)) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            message = await expect_error(session, "edit", edit_request({"operations": [{"op": "save"}]}), "were committed")
+            assert "do not send this edit again" in message.lower() and "fixture save failed" in message
+
+
+def client_config_regression() -> None:
+    """install.bat's --configure-clients / uninstall.bat's --remove-clients: merge, keep other servers, refuse bad JSON."""
+    with tempfile.TemporaryDirectory() as tmp:
+        t = Path(tmp)
+        roaming, store = t / "Roaming" / "Claude", t / "Local" / "Packages" / "Claude_x" / "LocalCache" / "Roaming" / "Claude"
+        v6 = t / "Local" / "Claude-Data" / "claude_abc"
+        roaming.mkdir(parents=True); store.mkdir(parents=True); v6.mkdir(parents=True); (t / "home" / ".codex").mkdir(parents=True)
+        (v6 / "claude_desktop_config.json").write_text('{"preferences": {"k": 2}, "mcpServers": {"sap2000": {"command": "s.exe"}, '
+                                                       '"revit": {"command": "python.exe", "args": ["server.py"], "env": {"A": "1"}}}}',
+                                                       encoding="utf-8")
+        (roaming / "claude_desktop_config.json").write_text('{"mcpServers": {"civil3d": {"command": "c.exe"}}, "x": 1}',
+                                                            encoding="utf-8-sig")
+        (t / "home" / ".codex" / "config.toml").write_text('[mcp_servers.civil3d]\ncommand = "c"\n', encoding="utf-8")
+        env = {**os.environ, "APPDATA": str(t / "Roaming"), "LOCALAPPDATA": str(t / "Local"), "USERPROFILE": str(t / "home")}
+        def run(*args):
+            return subprocess.run([sys.executable, str(SERVER), *args], env=env, capture_output=True, text=True, timeout=60)
+        r = run("--configure-clients", r"C:\x\revit-mcp-server.exe")
+        assert r.returncode == 0, r.stdout + r.stderr
+        for f in (roaming, store):
+            cfg = json.loads((f / "claude_desktop_config.json").read_text(encoding="utf-8"))
+            assert cfg["mcpServers"]["revit"] == {"command": r"C:\x\revit-mcp-server.exe"}, cfg
+        # an existing entry keeps what the user added (env); the old python + server.py arguments go
+        cfg = json.loads((v6 / "claude_desktop_config.json").read_text(encoding="utf-8"))
+        assert cfg["mcpServers"]["revit"] == {"command": r"C:\x\revit-mcp-server.exe", "env": {"A": "1"}}, cfg
+        cfg = json.loads((v6 / "claude_desktop_config.json").read_text(encoding="utf-8"))
+        assert cfg["preferences"] == {"k": 2} and cfg["mcpServers"]["sap2000"] == {"command": "s.exe"}, cfg
+        import tomllib
+        codex = tomllib.loads((t / "home" / ".codex" / "config.toml").read_text(encoding="utf-8"))
+        entry = codex["mcp_servers"]["revit"]
+        assert entry["command"] == r"C:\x\revit-mcp-server.exe" and "civil3d" in codex["mcp_servers"], codex
+        assert entry["tool_timeout_sec"] >= 3000 and entry["startup_timeout_sec"] >= 30 and entry["env"]["REVIT_MCP_SPLIT"] == "1", entry
+        cfg = json.loads((roaming / "claude_desktop_config.json").read_text(encoding="utf-8"))
+        assert cfg["mcpServers"]["civil3d"] == {"command": "c.exe"} and cfg["x"] == 1, cfg
+        assert "[mcp_servers.revit]" in (t / "home" / ".codex" / "config.toml").read_text()
+        again = run("--configure-clients", r"C:\x\revit-mcp-server.exe").stdout
+        assert again.count("already configured") == 4, again  # three Claude files and Codex: nothing rewritten
+        r = run("--remove-clients")
+        assert r.returncode == 0 and "revit" not in json.loads((roaming / "claude_desktop_config.json").read_text())["mcpServers"]
+        (roaming / "claude_desktop_config.json").write_text('{"mcpServers": {,}', encoding="utf-8")
+        r = run("--configure-clients", r"C:\x.exe")
+        assert r.returncode == 1 and "not valid JSON" in r.stdout, r.stdout
+        assert (roaming / "claude_desktop_config.json").read_text() == '{"mcpServers": {,}', "a broken file must not be overwritten"
+    print("client configuration ok: merged, kept other servers and entry settings, store app, Claude Desktop 6.x, Codex / ChatGPT with timeouts, removal, broken JSON left alone")
 
 
 def bbs_regression() -> None:
@@ -296,6 +409,10 @@ def static_checks() -> None:
     ops = set(re.findall(r'ops\["([a-z_0-9]+)"\]', src))
     assert reads == set(catalog.READ_ACTIONS), sorted(reads ^ set(catalog.READ_ACTIONS))
     assert ops == set(catalog.EDIT_OPS), sorted(ops ^ set(catalog.EDIT_OPS))
+    writes = set(re.findall(r'(?<![.\w])Write\("([a-z_0-9]+)"', src))
+    assert writes == set(catalog.WORKSHARE_ACTIONS), sorted(writes ^ set(catalog.WORKSHARE_ACTIONS))
+    import bridge_client
+    assert bridge_client.WRITE_METHODS == {"edit"} | set(catalog.WORKSHARE_ACTIONS), "bridge_client.WRITE_METHODS differs from the catalogue"
 
     # the server's own actions: the catalogue and the dispatch tables list the same names
     import server as srv
@@ -305,7 +422,7 @@ def static_checks() -> None:
 
     # every documented parameter must be read somewhere in the add-in (as a quoted name)
     quoted = set(re.findall(r'"([a-z_0-9]+)"', src))
-    missing = sorted({f"{name}.{p.rstrip('?')}" for name, (_, params) in {**catalog.READ_ACTIONS, **catalog.EDIT_OPS}.items()
+    missing = sorted({f"{name}.{p.rstrip('?')}" for name, (_, params) in {**catalog.READ_ACTIONS, **catalog.EDIT_OPS, **catalog.WORKSHARE_ACTIONS}.items()
                       for p in params if p.rstrip("?") not in quoted})
     assert not missing, f"documented but never read by the add-in: {missing}"
 
@@ -324,7 +441,7 @@ def two_revits() -> None:
     default (stale files) or a closed second Revit never leaves Claude without the one still open."""
     def start(bridge_file: Path, **env) -> subprocess.Popen:
         before = set((bridge_file.parent / "sessions").glob("*.json"))
-        fake = subprocess.Popen([sys.executable, str(ROOT / "tests" / "fake_bridge.py"), str(bridge_file)],
+        fake = subprocess.Popen([sys._base_executable, str(ROOT / "tests" / "fake_bridge.py"), str(bridge_file)],
                                 env={**os.environ, **env}, stdout=subprocess.DEVNULL)
         for _ in range(50):
             if set((bridge_file.parent / "sessions").glob("*.json")) - before:
@@ -386,7 +503,7 @@ def two_revits() -> None:
 def with_fake(coro, **env) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         bridge_file = Path(tmp) / "bridge.json"
-        fake = subprocess.Popen([sys.executable, str(ROOT / "tests" / "fake_bridge.py"), str(bridge_file)],
+        fake = subprocess.Popen([sys._base_executable, str(ROOT / "tests" / "fake_bridge.py"), str(bridge_file)],
                                 env={**os.environ, **env}, stdout=subprocess.DEVNULL)
         try:
             for _ in range(50):
@@ -405,8 +522,11 @@ if __name__ == "__main__":
     static_checks()
     workbook_regressions()
     bbs_regression()
+    client_config_regression()
     with_fake(single_tool)
     with_fake(declined, FAKE_EDIT="decline")
+    with_fake(rollback, FAKE_EDIT="rollback")
+    with_fake(postcommit, FAKE_EDIT="postcommit")
     with_fake(split_tools)
     with_fake(old_addin, FAKE_PROTOCOL="2")
     with_fake(old_addin, FAKE_PROTOCOL="3")

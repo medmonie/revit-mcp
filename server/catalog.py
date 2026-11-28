@@ -9,7 +9,9 @@ The groups mirror the add-in sources: plugin/Read/<Group>Read.cs and plugin/Edit
 """
 from __future__ import annotations
 
-BRIDGE_VERSION = "0.17.0"   # keep plugin/BridgeInfo.cs in step; the tests check it
+import os
+
+BRIDGE_VERSION = "0.29.0"   # keep plugin/BridgeInfo.cs in step; the tests check it
 
 Entry = tuple[str, dict[str, str]]
 Group = dict[str, Entry]
@@ -79,7 +81,7 @@ READ_GROUPS: dict[str, Group] = {
                           {"ids": IDS, "select?": "default true", "zoom?": "default true"}),
     },
     "Links and CAD": {
-        "list_links": ("Revit links (file, status, path, loaded document, transform: origin and plan rotation) and linked / imported "
+        "list_links": ("Revit links (file, status, path, loaded document, fromIfc, transform: origin and plan rotation) and linked / imported "
                        "CAD files (file, linked or imported, view). Read inside a loaded link with the link parameter of get_elements, "
                        "get_element, count_by_category, list_types, list_levels and list_grids.", {}),
         "get_cad_geometry": ("Lines, arcs, circles and polylines inside a linked / imported DWG or DXF, by layer, in model coordinates. "
@@ -95,6 +97,26 @@ READ_GROUPS: dict[str, Group] = {
                           "min_size?": "default 150 mm", "max_size?": "default 4000 mm",
                           "skip_existing?": "default true: skip outlines where a column already stands at the base", "level?": "base level (for the existing-column check); default the drawing's elevation",
                           "limit?": "outlines listed; default 50"}),
+        "get_coordinates": ("Project base point, survey point and internal origin (internal and shared coordinates), angle to true north, "
+                            "the active and other named locations, and the site (place, latitude / longitude). With link=: the same for the "
+                            "linked model, and whether its shared coordinates agree with the host's (offset and rotation if not).",
+                            {"link?": "a loaded Revit link (instance id, link type id or file name from list_links)",
+                             "coordinates?": "with link: host (default, base points shown in host coordinates) | link"}),
+        "link_clashes": ("Hard clashes between this model's elements and a loaded Revit link (an IFC link too): pairs whose solids intersect, "
+                         "with volume and a point inside each clash, grouped by category pair. Reads only.",
+                         {"link": "the Revit or IFC link (instance id, link type id or file name from list_links)",
+                          "category?": "host categories; default: foundations, columns, walls, beams, floors",
+                          "link_category?": "categories in the link; default every model category except rooms, areas, spaces, masses",
+                          "level?": "only host elements on this level", "view?": "only host elements visible in this view",
+                          "min_volume?": "smallest clash counted, m3; default about 0.03 cm3 (touching faces do not count)",
+                          "max_seconds?": "time budget, default 40; then resume with resume_after", "resume_after?": "resumeAfter from the previous call",
+                          "limit?": "clashes listed, default 200"}),
+        "list_annotations": ("What the drawings say, for QA: dimension values and the text they show (per segment), text overrides, prefixes / "
+                             "suffixes, references; spot dimensions; tag texts and the elements tagged; text notes. Flags text_override, "
+                             "zero_value, no_references, orphaned, empty_text.",
+                             {"view?": "one view", "sheet?": "a sheet (number, name or id): the sheet and every view on it",
+                              "kind?": "any of dimensions, spots, tags, text; default all", "only_issues?": "default false: list only flagged items",
+                              "limit?": "items listed, default 500"}),
     },
     "Quantities": {
         "takeoff": ("Quantity take-off from the model: count, length, area and volume as Revit computes them, grouped.",
@@ -111,10 +133,17 @@ READ_GROUPS: dict[str, Group] = {
                           {"category?": "default: columns and beams", "group_by?": "type (default) | level | type_level | category",
                            "density?": "kg/m3, default 7850", "family_contains?": STEEL_WORDS,
                            **SCOPE}),
-        "rebar_list": ("Every bar set (rebar and bars of area / path systems) for a bar bending schedule: member, mark, bar type, "
-                       "diameter, shape, number, length, dimensions A..J, total length, weight; totals by diameter.",
+        "rebar_list": ("Every bar set (rebar and bars of area / path systems, with systemKind) for a bar bending schedule: member, mark, "
+                       "bar type, diameter, shape, number, length, dimensions A..J, total length, weight (weightSource); totals by "
+                       "diameter; fabric sheets (cut size, kg) and couplers.",
                        {"hosts?": "only bars in these host element ids", "level?": "only bars whose host is on this level",
                         "view?": "only bars visible in this view", "limit?": "default 5000"}),
+        "list_reinforcement_types": ("Reinforcement types in the model, by the names the reinforcement edits take: bar types (diameter, "
+                                     "hooks allowed), hook types (angle), path / area / fabric area types, fabric sheet types (size, "
+                                     "spacing, wires, laps, kg), fabric wire types, coupler types, rebar annotation types; Revit 2027 splice and crank types.",
+                                     {"limit?": "default 300 per list"}),
+        "list_numbering": ("Revit's numbering of rebar, fabric and couplers: each schema's partitions with the numbers in use (ranges), "
+                           "their count and the gaps.", {}),
         "rebar_takeoff": ("Reinforcement: bars, total length (m) and weight (kg, 7850 kg/m3), grouped.",
                           {"group_by?": "diameter (default) | host_category | type | diameter_host_category",
                            "host_category?": "only bars hosted by these categories", **SCOPE}),
@@ -187,27 +216,128 @@ READ_GROUPS: dict[str, Group] = {
                           {"category?": CATEGORIES, "used_only?": "default true: only types with instances",
                            "entries_limit?": "keynote entries listed, default 100", "limit?": "types listed, default 300"}),
     },
+    "Clearances and crossings": {
+        "ray_cast": ("What lies above, below or beside a point or an element (in this model or a link): cast rays through a 3D view, "
+                     "into loaded links too; hits nearest first with distance and point.",
+                     {"origin?": XYZ + " start point (or give id)", "id?": "start from this element's box (bottom for down, top for up)",
+                      "link?": "the element of id is in this link", "direction?": "up | down (default) | east | west | north | south | [x,y,z], or a list",
+                      "category?": "only hit these categories", "links?": "default true: search inside links", "max_distance?": "default 50 m",
+                      "limit?": "hits per ray, default 5", "view3d?": "3D view to cast in; default {3D}"}),
+        "clearances": ("Clear distance from each element of a category (in this model or a link) to the first element below (or above): "
+                       "headroom under ducts and beams, gaps to slabs. Smallest first.",
+                       {"category": CATEGORY, **LINK, "direction?": "down (default) | up", "target_category?": "only these count as obstacles",
+                        "less_than?": "report only clearances below this", "links?": "default true", "max_distance?": "default 50 m",
+                        "max_seconds?": "default 40; then resume_after", "resume_after?": "", "limit?": "default 200", "view3d?": "", **SCOPE}),
+        "mep_crossings": ("Where ducts, pipes, cable trays and conduits pass through beams, walls, slabs, columns and foundations, each model "
+                          "in this model or a link (MEP and structure links): point, length inside, size, system, structural element.",
+                          {"mep_link?": "link holding the MEP runs (default this model)", "structure_link?": "link holding the structure (default this model)",
+                           "mep_category?": "default ducts, pipes, cable trays, conduits", "structure_category?": "default beams, walls, floors, columns, foundations",
+                           "min_size?": "only runs at least this big", "max_seconds?": "default 40; then resume_after", "resume_after?": "", "limit?": "default 300"}),
+    },
+    "MEP": {
+        "mep_systems": ("MEP systems (duct, pipe, electrical): name, type, classification, terminals and equipment, network size, base equipment, well connected.",
+                        {**LINK, "kind?": "all (default) | duct | pipe | electrical", "limit?": "default 300"}),
+        "mep_quantities": ("MEP run lengths (ducts, pipes, trays, conduits, flex) by size, type, system, level or category (duct surface area too), and counts of fittings, "
+                           "accessories, terminals, equipment and fixtures by type.",
+                           {**LINK, "category?": "default all runs", "group_by?": "size (default) | type | system | level | category",
+                            "fittings?": "default true: count fittings and equipment", **SCOPE}),
+    },
+    "MEP and HVAC checks": {
+        "mep_flow": ("Revit's computed flow (L/s), velocity (m/s), friction (Pa/m) and pressure drop (Pa) per duct or pipe, totals per system; "
+                     "with max_velocity / max_friction only the runs over those limits (the engineer's limits) are listed.",
+                     {"kind?": "duct (default) | pipe", "system?": "system name contains", "max_velocity?": "m/s", "max_friction?": "Pa/m",
+                      **LINK, "limit?": "default 200"}),
+        "mep_connectivity": ("Open duct / pipe ends (connected to nothing) and terminals, fittings and equipment whose connectors are in no system, "
+                             "by category with locations.", {"category?": "one category; default all duct and pipe categories", **LINK, "limit?": "default 100"}),
+        "air_terminals": ("Air terminals with flow (L/s), system classification and the MEP space they are in; per space the supply / return / "
+                          "exhaust totals against the space's specified supply airflow.", {"level?": LEVEL, **LINK, "limit?": "default 200"}),
+        "mep_connectors": ("Every connector of the elements given (or of a category): domain, shape, size, classification, flow "
+                           "direction, flow, system, what it is connected to, where it is and which way it points. Use it to pick "
+                           "the connector for mep_route 'from' or mep_connect 'classification'.",
+                           {"ids?": IDS, "category?": CATEGORY, "open_only?": "default false", "limit?": "default 100 elements", **LINK}),
+        "mep_insulation": ("Insulation and lining of ducts, pipes, fittings and accessories: type and thickness per element, totals by type "
+                           "and thickness (with run length), and the elements with neither, for QA against the engineer's specification.",
+                           {"ids?": IDS, "category?": CATEGORY + "; default ducts, pipes, their fittings, accessories and flex",
+                            "system?": "system name contains", "missing_only?": "list only elements without insulation; default false",
+                            "limit?": "default 200", **LINK}),
+        "electrical_circuits": ("Panels (name, distribution system, mains, connected and demand load and current, circuits) and circuits "
+                                "(number, panel, kind, load name, poles, voltage, apparent / true load, current, rating, wire, length, loads) as "
+                                "Revit computes and shows them, and the electrical loads on no circuit.",
+                                {"panel?": "panel name or id", "limit?": "default 200", **LINK}),
+    },
+    "Documents and batch reads": {
+        "list_documents": ("Models open in this Revit: title, documentId, active, path, workshared, cloud, unsaved changes, and whether Claude opened "
+                           "it. Pass a model's documentId as document_id to any read to read that model without activating it.", {}),
+        "model_files": ("Revit files in a folder (or given paths) WITHOUT opening them: Revit version saved in, workshared, central / local, "
+                        "central path, saved by, size, date. Backups (.0001.rvt) are skipped.",
+                        {"folder?": "full folder path", "paths?": "full .rvt paths", "pattern?": "default *.rvt", "recursive?": "default false",
+                         "limit?": "default 200"}),
+        "model_open": ("Open a model in the background by default. New opens of workshared files detach from central and preserve worksets "
+                       "by default. An already open model keeps its current worksharing state. Check alreadyOpen, detached and active. "
+                       "Read it with document_id or request activate: true.",
+                       {"path": "full .rvt path (cloud models: open them in Revit)", "activate?": "default false",
+                        "detach?": "preserve (default: keep worksets) | discard", "worksets?": "all (default) | none (open closed)",
+                        "audit?": "default false"}),
+        "model_close": ("Close a model that Claude opened (model_open, model_new, batch_read), without saving. Not the active model "
+                        "(Revit does not allow it) and never a model the user opened.", {"document_id": "from list_documents"}),
+        "model_new": ("Create a new project from a template. activate: true (default) saves it once as a scratch file under "
+                      "%TEMP%\\RevitMcpScratch so Revit can make it active (edits need the active model); it is never saved again.",
+                      {"template?": "full .rte path; default Revit's default project template", "activate?": "default true"}),
+        "batch_read": ("Run one read action over several model files: each is opened in the background (workshared files detached), read, "
+                       "and closed without saving. Per file: ok, seconds, the action's result or the error. Stops at max_seconds; continue "
+                       "with resume_after.",
+                       {"action?": "a read action, e.g. count_by_category, takeoff, model_health, list_warnings, check_names",
+                        "params?": "that action's parameters",
+                        "actions?": "instead of action: list of {action, params} run on each file while it is open (at most 20)", "folder?": "full folder path", "paths?": "full .rvt paths",
+                        "pattern?": "default *.rvt", "recursive?": "default false", "max_files?": "default 20, at most 200",
+                        "max_seconds?": "default 600", "resume_after?": "resumeAfter from the previous call"}),
+    },
+    "Worksharing": {
+        "worksharing_status": ("Workshared model: central path (server or Autodesk Docs), user, elements and worksets you hold; for given ids their "
+                               "checkout status, owner, creator, last changed by, workset and whether they are current with central.",
+                               {"ids?": IDS}),
+    },
+    "Spaces, analysis and connections": {
+        "list_spaces": ("Rooms, areas or MEP spaces: number, name, level, area, perimeter, volume; unplaced and not-enclosed ones; totals by level.",
+                        {**LINK, "kind?": "rooms (default) | areas | spaces", "level?": "", "limit?": "default 500"}),
+        "analytical_model": ("Analytical members and panels: role, section, material, end points, releases, associated physical element; "
+                             "boundary conditions by type.", {**LINK, "limit?": "default 500"}),
+        "list_loads": ("Load cases, load combinations (factors) and point / line / area loads with their values (kN, kN/m, kN/m2), as entered.",
+                       {**LINK, "limit?": "default 500"}),
+        "steel_connections": ("Structural (steel) connections: type, connected members, approval, code checking status.",
+                              {**LINK, "limit?": "default 500"}),
+    },
     "Meta": {
         "family_inspect": ("Look inside a loaded family (opened in memory, never saved): its parameters (instance / type, formula), solids with "
                            "their material and the parameter it is linked to, nested families.", {"family": "family name"}),
         "describe_api": ("Developer aid: public members of a Revit API type as loaded in this Revit.",
                          {"type_name": "e.g. Autodesk.Revit.DB.Wall, or a short name", "contains?": "member name filter", "limit?": "default 300"}),
         "get_edit_permission": ("Whether editing is currently allowed in this Revit session, and how to allow it.", {}),
-        "get_operation_status": ("Look up an edit receipt without waiting for the Revit UI. Inspect result for the transaction outcome.",
-                                 {"operation_id": "the edit operation ID", "pid?": "Revit process ID from the receipt or transport error"}),
+        "get_operation_status": ("Look up an edit receipt without waiting for the Revit UI. Inspect result for the transaction outcome. "
+                                 "Without operation_id: the writes this MCP server dispatched, newest first, with their outcome. "
+                                 "Use that after an edit call timed out or was cancelled, before sending the edit again.",
+                                 {"operation_id?": "the edit operation ID; omit to list recent writes",
+                                  "pid?": "Revit process ID from the receipt or transport error"}),
         "list_actions": ("What the installed add-in supports (names only). Use 'help' for descriptions.", {}),
     },
 }
 
 # computed in the MCP server; they never reach the add-in under these names
 LOCAL_ACTIONS: Group = {
-    "help": ("This catalogue with every parameter. Pass topic to narrow it.", {"topic?": "an action or edit operation name"}),
+    "help": ("This catalogue with every parameter. Pass topic to narrow it.",
+             {"topic?": "an action or edit operation name, a list of names, or a group title such as 'Quantities' or 'edit'"}),
     "qs_report": ("Write a QS workbook (.xlsx) on this computer: summary, concrete by grade and level, elements by type, steel tonnage, "
                   "rebar, formwork, QA (material problems, unjoined overlaps), notes. Reads only; writes the file.",
                   {"path": "full path of the .xlsx to write", "overwrite?": "default false", "level?": "only this level",
                    "category?": CATEGORIES, "check_overlaps?": "default true (time-limited auto-join check)",
                    "family_contains?": STEEL_WORDS, "density?": "steel kg/m3, default 7850",
                    "view?": VIEW, "document_id?": "documentId to require", "concrete_materials?": "exact additional names to classify as concrete"}),
+    "mep_report": ("Write an MEP quantities workbook (.xlsx) on this computer: run lengths (ducts, pipes, trays, conduits, flex) by system, "
+                   "size, type and level with duct surface area, fittings / accessories / terminals / equipment / fixtures by type, insulation "
+                   "totals and the elements without, panels and circuits, notes; totals are Excel formulas. Reads only; writes the file.",
+                   {"path": "full path of the .xlsx to write", "overwrite?": "default false", "level?": "only this level", "view?": VIEW,
+                    "category?": "one MEP category or a list; default all runs", "link?": "read a loaded link instead (from list_links)", "insulation?": "default true",
+                    "electrical?": "default true", "document_id?": "documentId to require"}),
     "bbs_report": ("Write a bar bending schedule workbook (.xlsx) on this computer from the model's reinforcement: BBS sheet (member, "
                    "mark, type, diameter, shape, number, length, A..J, total length, weight), summary by diameter and member. "
                    "A complete selection of up to 50,000 sets is required. Narrow larger selections by hosts, level or view.",
@@ -237,6 +367,10 @@ EDIT_ACTION = (
     "Change the model or write files. The server captures the active document before editing. Pass document_id from an earlier ping to require that model. "
     "operation_id (generated when omitted) lets a retry after a lost reply return the first result instead of editing twice "
     "(reuse it only with the identical request), and get_operation_status reports it. "
+    "If an edit call times out or is cancelled, the edit may still have been applied: call get_operation_status "
+    "(no operation_id lists recent writes) before sending it again. "
+    "If an edit call times out or is cancelled, the edit may still have been applied: call get_operation_status "
+    "(no operation_id lists recent writes) before sending it again. "
     "Model edits run in one transaction. Dry runs list first-pass purge candidates and roll back simulated model changes. Saving and exporting run after commit "
     "and report their own outcomes in postCommit. "
     "Editing needs a ONE-TIME permission per Revit session: the first edit returns at once with permission 'not granted' "
@@ -313,7 +447,8 @@ EDIT_GROUPS: dict[str, Group] = {
                          {"base_type": TYPE, "types": "list of {name, values?: {\"Parameter name\": value}}", "category?": CATEGORY,
                           "if_exists?": "fail (default) | skip | update (sets the values on the existing type)"}),
         "join_overlaps": ("Join measured unjoined intersections in scope using the specified cut priority. Coincidence, "
-                          "containment, and unmeasured pairs are left for review. See resolvedByRevit for detach resolutions.",
+                          "containment, and unmeasured pairs are left for review. See resolvedByRevit for detach resolutions. When Revit refuses a join at commit "
+                          "(can't cut joined element), the batch is run again without those elements and they are listed in skippedCutConflict.",
                           {"priority?": "category order, default foundations, columns, walls, beams, floors", "category?": "default: the same five",
                            "level?": "only elements on this level", "view?": "only elements visible in this view",
                            "include_steel?": "default false", "family_contains?": STEEL_WORDS,
@@ -519,6 +654,53 @@ EDIT_GROUPS: dict[str, Group] = {
                        {"ids": "slab ids", "bar": "bar type or diameter", "spacing": "bar spacing", "layers": "bottom | top | both",
                         "direction?": XY + " major direction; default x", "boundary?": "list of " + XY + " corners; default the slab outline"}),
     },
+    "Reinforcement systems": {
+        "path_reinforcement": ("Path reinforcement in a wall or slab with the engineer's values: bars perpendicular to a sketched path at a "
+                               "spacing, of a length, optional alternating bars and hooks.",
+                               {"host": "wall or slab id", "path": "open polyline: list of " + XY + " points (slab: at its top; wall: "
+                                "projected on its plane, z default the wall base)", "bar": "bar type or diameter", "spacing": "bar spacing",
+                                "length": "primary bar length", "face?": "slab: top | bottom; wall: exterior | interior",
+                                "flip?": "bool: bars to the other side of the path", "start_hook?": "hook type or 'none'",
+                                "end_hook?": "hook type or 'none'", "additional_offset?": "extra cover offset",
+                                "alternating?": "{bar?, length, offset?}: alternating bars", "type?": "path reinforcement type"}),
+        "fabric_area": ("Fabric (welded mesh) area over a slab or wall with a given sheet type: the whole host, or a boundary in a slab.",
+                        {"host": "slab or wall id", "sheet_type": "fabric sheet type ('default' creates Revit's default type)",
+                         "boundary?": "slab only: list of " + XY + " corners", "direction?": XY + " major direction",
+                         "origin?": XY + " sheet layout origin (with boundary)", "location?": "top | bottom (slab), exterior | interior (wall)",
+                         "cover_offset?": "additional cover", "lap_major?": "lap in the major direction (default: the sheet type's)",
+                         "lap_minor?": "lap in the minor direction", "type?": "fabric area type"}),
+        "fabric_sheet_place": ("Place one fabric sheet in a slab or wall at a point, rotated in the host plane.",
+                               {"host": "slab or wall id", "sheet_type": "fabric sheet type", "point": XY + " sheet origin",
+                                "rotation?": "degrees in the host plane", "location?": "top | bottom | exterior | interior",
+                                "cover_offset?": "additional cover"}),
+        "rebar_hooks": ("Hooks of the model's hook types on existing bar sets, with orientation and rotation. Checks the bar type and "
+                        "shape allow the hook.",
+                        {"ids": "rebar ids", "start?": "hook type or 'none'", "end?": "hook type or 'none'",
+                         "start_orientation?": "left | right", "end_orientation?": "left | right",
+                         "start_rotation?": "degrees", "end_rotation?": "degrees"}),
+        "coupler_place": ("A coupler of a given type joining two bar ends end to end (or one bar end, as an end treatment).",
+                          {"type": "coupler family type", "first": "{rebar: id, end: start | end}",
+                           "second?": "{rebar: id, end: start | end}; leave out for a single bar end"}),
+        "rebar_annotate": ("Multi-reference annotation (one dimension across the bars plus a tag) for bar sets in a section, plan or "
+                           "elevation.",
+                           {"ids": "rebar ids", "origin": XYZ + " a point on the dimension line ([x, y] takes z from the first bar)",
+                            "view?": VIEW, "direction?": XYZ + " dimension line direction, default the view's right",
+                            "tag_head?": XYZ + " tag position, default the origin", "leader?": "default true",
+                            "type?": "annotation type (list_reinforcement_types)"}),
+    },
+    "Reinforcement numbering and splices": {
+        "rebar_numbering": ("Renumber a partition of a numbering schema: remove gaps, shift its numbers to start at a number, or change "
+                            "one number. Move bars to another partition with set_parameters (bip:NUMBER_PARTITION_PARAM).",
+                            {"action": "remove_gaps | shift | change", "schema?": "rebar (default) | fabric | coupler, or the schema name",
+                             "partition?": "partition name; required when the schema has several", "first?": "with shift: the new first number",
+                             "from?": "with change", "to?": "with change"}),
+        "splice_type_create": ("Revit 2027: a rebar splice type with the engineer's lap (and stagger) in bar diameters.",
+                               {"name": "", "lap_d": "lap length in bar diameters", "stagger_d?": "stagger length in bar diameters",
+                                "shift?": "bar_plane | none"}),
+        "rebar_splice": ("Revit 2027: splice bar sets with a splice type, by rules (no bar longer than max_length) or at a line in a view.",
+                         {"ids": "rebar ids", "type": "splice type (list_reinforcement_types)", "position?": "end1 | middle (default) | end2",
+                          "rules?": "{max_length, min_length?, run_out?: start | end}", "at?": "{start: " + XYZ + ", end: " + XYZ + ", view?}"}),
+    },
     "Modelling": {
         "slab_shape": ("Shape a slab by points: move an existing corner (within 'tolerance') or add a point, each by an offset from the slab top; "
                        "'reset' makes it flat again. Use floor_create with slope_arrow for a plane slope.",
@@ -668,6 +850,134 @@ EDIT_GROUPS: dict[str, Group] = {
         "shaft_create": ("Create a shaft opening through every slab between two levels.",
                          {"bottom_level": LEVEL, "top_level": LEVEL, "boundary?": "list of " + XY + " corners", "center?": XY, "radius?": "",
                           "base_offset?": "", "top_offset?": ""}),
+        "crossing_opening": ("Cut an opening in a host wall, slab, roof, ceiling, beam or brace where a duct, pipe, tray or conduit (host or link) "
+                             "passes through it (see mep_crossings): the run's size plus the clearance you give on each side, square to the face. "
+                             "Walls get rectangular openings; slabs and beams round or rectangular like the run. Refused when the run is more "
+                             "than 15 degrees off square, or no longer passes through (an opening already clears it). Structure in a link cannot be cut.",
+                             {"structure": "id of the host element to cut", "mep": "id of the run", "mep_link?": "the link holding the run (from list_links)",
+                              "clearance": "gap on each side of the run, e.g. 50 (the engineer's value)",
+                              "shape?": "auto (default: like the run) | round | rectangular", "at?": XYZ + " picks the crossing nearest this point when the run passes through the element more than once"}),
+    },
+    "MEP": {
+        "mep_route": ("One CONNECTED duct / pipe / tray / conduit run along a path of points, with the elbows the type's routing "
+                      "preferences give (straight segments with the given type, system and size); it can start on an equipment, terminal "
+                      "or panel connector (from) and end on a main (to_main); a sanitary / drainage run can fall at the engineer's slope.",
+                      {"kind": "duct | pipe | cable_tray | conduit", "level": LEVEL, "path": "list of " + XYZ + " (2D points: at the level plus z)",
+                       "z?": "centreline height above the level for 2D points", "type?": "type name or id; default the first",
+                       "slope?": "percent, the engineer's: the run falls by it along the path from the first point (negative rises); 2D path points only",
+                       "system?": "ducts and pipes: system type name", "diameter?": "not with from (the run takes the connector's size)", "width?": "", "height?": "",
+                       "from?": "{element: equipment / terminal id, classification?: e.g. SupplyAir, ReturnAir (mep_connectors), stub?: straight "
+                                "length out of the connector when the first path point is not ahead of it, default 300}: the run starts on that connector",
+                       "to_main?": "id of a duct / pipe / tray / conduit the last segment points at: joined with a tap or tee (trays and conduits: tee)"}),
+        "mep_connect": ("Connect an element's open connector (air terminal, fixture, sprinkler, equipment, the open end of a run) to a main duct, "
+                        "pipe, cable tray or conduit: a straight branch along the connector's direction, then the tap / tee from the main's "
+                        "routing preferences (trays and conduits: a tee, the main split there). The connector must point at the main.",
+                                              {"element": "id of the terminal / fixture / equipment / run", "main": "id of the main duct, pipe, tray or conduit",
+                                               "type?": "branch type; default the main's", "diameter?": "branch size", "width?": "", "height?": "",
+                                               "level?": LEVEL + " (only if the main has none)",
+                                               "classification?": "which open connector, e.g. SupplyAir or ReturnAir (mep_connectors lists them)"}),
+        "mep_fixture_place": ("Plumbing fixtures, sprinklers, electrical / lighting / fire alarm / data / security / communication devices "
+                              "and plumbing or mechanical equipment of the engineer's type at the engineer's points: level-based types on the level "
+                              "at height; face-based types on a plane at height facing down (ceiling sprinklers, downlights) or up (floor drains), or, with walls, "
+                              "on the nearer side face of a wall (receptacles, switches; walls of a link with wall_link). Optional rotation, "
+                              "parameter values and a connection of each to a main pipe or duct (sprinkler drops, fixture branches).",
+                              {"type": TYPE, "level": LEVEL, "points": "list of " + XYZ, "height?": "mounting height above the level, default 0",
+                               "rotation?": "degrees about the vertical: one, or one per point (not on walls)",
+                               "face?": "face-based types without walls: down (default, a ceiling plane: sprinklers, downlights) | up (a floor plane: floor drains, floor boxes)",
+                               "walls?": "wall id for every point, or a list of one id (or null) per point: face-based types sit on its nearer side face",
+                               "wall_link?": "the link holding the walls (from list_links)", "set?": "{parameter: value} for every placed element",
+                               "main?": "pipe or duct to connect each one to (its connector must point at it; a tee splits the main, later points use the piece they point at)",
+                               "classification?": "which connector, e.g. DomesticColdWater, Sanitary, FireProtectWet", "branch_type?": "", "branch_diameter?": "",
+                               "branch_width?": "", "branch_height?": ""}),
+        "sleeve_place": ("Sleeves of the family type the engineer gives where runs cross walls / slabs / beams (host or link): centred on the "
+                         "crossing (wall centre plane, slab mid-depth), turned so the family's own axis lies along the run, with the parameter "
+                         "values given; a value can be a length measured at the crossing: crossing_length, run_outside_diameter, run_diameter, "
+                         "run_width or run_height, optionally + or - the engineer's clearance (e.g. \"run_outside_diameter + 50\"). The run is "
+                         "not cut (crossing_opening cuts openings; mep_crossings finds the crossings).",
+                         {"type": TYPE + " (generic model, pipe / duct accessory or fitting, specialty or mechanical equipment; level- or work-plane-based)",
+                          "items": "list of {run: duct / pipe / tray / conduit id, crossing: wall / floor / beam id}",
+                          "crossing_link?": "the link holding the crossed elements", "axis?": "x | y | z (default): the family's own axis along its length",
+                          "set?": "{parameter: value or measured length}, e.g. {\"Diameter\": \"run_outside_diameter + 50\", \"Length\": \"crossing_length\"}"}),
+        "electrical_circuit_create": ("Electrical circuits from the engineer's list: each circuit's loads (devices, fixtures, equipment), and "
+                                      "optionally its panel, kind, load name and breaker rating. Revit computes the load, voltage and current.",
+                                      {"circuits": "list of {elements: ids, panel?: panel name or id, kind?: power (default) | data | telephone | "
+                                                   "security | fire_alarm | nurse_call | controls | communication, load_name?, rating?: amperes}"}),
+        "electrical_circuit_edit": ("Change a circuit: add or remove loads, put it on a panel or take it off, load name, rating.",
+                                    {"circuit": "circuit id (electrical_circuits)", "add?": IDS, "remove?": IDS, "panel?": "panel name or id",
+                                     "disconnect_panel?": "default false", "load_name?": "", "rating?": "amperes"}),
+        "electrical_panel_set": ("A panel's distribution system (from Revit's Electrical Settings) and / or panel name.",
+                                 {"panel": "panel name or id", "distribution_system?": "name or id", "name?": "new panel name"}),
+        "mep_system_create": ("Create a duct or piping system of a given system type from the free connectors of given terminals / equipment "
+                              "(only the connectors of the type's classification; others are listed); optional base equipment (its connector is the source, so the system also needs at least one other element).", {"kind": "duct | pipe", "system_type?": "e.g. Supply Air, Chilled Water Supply; default the type matching the connectors' classification",
+                                                           "elements": IDS, "name?": "system name", "base_equipment?": "equipment id"}),
+        "air_terminal_place": ("Place air terminals of a given type at points and a height above a level, with the airflow the engineer gives, "
+                               "optionally each connected to a main duct above it (branch + tap / tee, as mep_connect; a main split for a tee is "
+                               "followed to the next terminal). Face-based types are hosted on a reference plane facing down at that height.",
+                               {"type": TYPE + " (air terminals)", "level": LEVEL, "points": "list of " + XY, "height": "terminal face height above the level",
+                                "flows?": "L/s: one value, or one per point (the engineer's values)", "main?": "id of a duct above the points to connect to",
+                                "branch_type?": "branch duct type; default the main's", "branch_diameter?": "branch size (round)",
+                                "branch_width?": "", "branch_height?": ""}),
+        "mep_system_add": ("Add elements to an existing duct or piping system (their free connectors of the system's classification; others are listed).",
+                           {"system": "system id (mep_systems)", "elements": IDS}),
+        "mep_system_remove": ("Remove elements from a duct or piping system (not its base equipment).", {"system": "system id (mep_systems)", "elements": IDS}),
+        "mep_accessory_place": ("Insert duct accessories (dampers, fire dampers) or pipe accessories (valves) of the type the engineer gives into "
+                                "existing straight ducts / pipes, at a point on the run or where the run crosses a given wall / slab (its centre "
+                                "plane or mid-depth, so an opening already cut there does not matter; host or link). Revit splits the run, gives "
+                                "the accessory the run's size and connects it; several items on one run follow its pieces. Nothing is chosen here: "
+                                "type, fire rating and positions are the engineer's (mep_crossings finds the crossings).",
+                                {"type": TYPE + " (duct or pipe accessories)",
+                                 "items": "list of {run: duct / pipe id, point?: " + XYZ + " on the run ([x, y] is matched in plan), "
+                                          "crossing?: id of the wall / floor / other element it passes through}: give point or crossing",
+                                 "crossing_link?": "the link holding the crossing elements (from list_links)"}),
+        "mep_insulation_add": ("Add duct / pipe insulation or duct lining of the type and thickness the engineer gives to ducts, pipes, their "
+                               "fittings and accessories, or to a whole system's network. Elements that already have it are listed, or changed with replace.",
+                               {"kind": "insulation | lining (ducts only)", "type": "insulation / lining type name or id (mep_insulation and list_types show them)",
+                                "thickness": "the engineer's thickness", "elements?": IDS, "system?": "duct or piping system id (mep_systems): its ducts / pipes, fittings, accessories",
+                                "replace?": "change the type and thickness of existing insulation; default false"}),
+        "mep_insulation_remove": ("Remove the insulation or lining of the elements given, or of a system's network.",
+                                  {"kind": "insulation | lining", "elements?": IDS, "system?": "duct or piping system id"}),
+        "mep_run_create": ("Create straight ducts, pipes, cable trays or conduits between the points given, with the type, system and size given "
+                           "(no fittings are added between runs).",
+                           {"kind": "duct | pipe | cable_tray | conduit", "level": LEVEL, "runs": "list of {start: " + XYZ + ", end: " + XYZ + "} (z defaults to the level)",
+                            "type?": "type name or id; default the first", "system?": "ducts and pipes: system type name; default the first",
+                            "diameter?": "round ducts, pipes, conduits", "width?": "rectangular ducts, trays", "height?": "rectangular ducts, trays"}),
+    },
+    "Rooms and spaces": {
+        "room_create": ("Create rooms or MEP spaces at the points given, with the names and numbers given, or (all_regions) a room in every enclosed region "
+                        "of a level that has none. Reports each one's area and warns about any that are not enclosed.",
+                        {"kind?": "rooms (default) | spaces", "level": LEVEL, "points?": "list of " + XY, "names?": "one per point",
+                         "numbers?": "one per point", "all_regions?": "default false: rooms in every enclosed region instead of points",
+                         "phase?": "phase name (spaces at points, or rooms with all_regions)"}),
+        "spaces_from_rooms": ("Create an MEP space for every placed room of a linked architectural model, on the host level at the same elevation, "
+                              "with the room's name, number and height; the link is made room-bounding; regions that hold a space are skipped. Reports "
+                              "spaces that are not enclosed.", {"link": "link instance id (list_links)", "levels?": "only these host levels",
+                                                                 "room_bounding?": "default true", "level_tolerance?": "default 50", "phase?": "phase name", "max?": "default 2000"}),
+        "hvac_zone_create": ("Create an HVAC zone holding the given spaces (all on one level).", {"spaces": "list of space ids", "name?": "zone name"}),
+        "space_airflow_set": ("Set spaces' design supply / return / exhaust airflow to the engineer's values (L/s); air_terminals compares them with "
+                              "the terminals.", {"spaces": "list of space ids", "supply?": "L/s: one value or one per space", "return?": "", "exhaust?": ""}),
+        "room_separation": ("Draw room (or space) separation lines on a level's plan.",
+                            {"kind?": "rooms (default) | spaces", "level": LEVEL, "lines": "list of " + SEGMENT, "view?": "plan of that level; default the first floor plan"}),
+    },
+    "Analytical model and loads": {
+        "analytical_member_create": ("Create an analytical member (Revit 2023+ analytical model) along a line or arc, optionally tied to its physical element.",
+                                     {"start": XYZ, "end": XYZ, "mid?": XYZ + " a point on the arc", "role?": "beam (default) | column | girder | member | unset",
+                                      "section?": TYPE + " (framing or column type)", "material?": "material name", "physical?": "id of the physical element to associate"}),
+        "analytical_panel_create": ("Create an analytical panel from a flat outline (floor or wall), optionally tied to its physical element.",
+                                    {"points": "list of " + XYZ + " corners in one plane", "role?": "floor | wall (default from the outline) | panel | unset",
+                                     "thickness?": "", "physical?": "id of the physical element to associate"}),
+        "load_case_create": ("Create a load case.",
+                             {"name": "", "category": "dead | live | wind | snow | roof_live | accidental | temperature | seismic",
+                              "nature?": "load nature name; default the category's (Dead, Live ...)", "create_nature?": "default false: add the nature when missing",
+                              "number?": "case number", "if_exists?": "'skip' to accept an existing case of that name"}),
+        "load_combination_create": ("Create a load combination from the cases and factors you give (no factors are chosen for you).",
+                                    {"name": "", "components": "list of {case: load case or combination name, factor}",
+                                     "type?": "combination (default) | envelope", "state?": "ultimate (default) | serviceability"}),
+        "load_place": ("Place a point, line or area load with the values you give on an analytical member or panel (or a physical element with "
+                       "an associated analytical one). Forces in global axes: kN (point), kN/m (line), kN/m2 (area); moments kN m (point), kN m/m (line).",
+                       {"kind": "point | line | area", "load_case": "load case name", "host": "analytical member / panel id, or its physical element id",
+                        "force": "[fx, fy, fz]", "moment?": "[mx, my, mz]", "point?": "point loads: " + XYZ + " on the member; default at_end",
+                        "at_end?": "point loads: start (default) | end", "start?": "line loads: " + XYZ + " start of a part of the member; default all of it",
+                        "end?": "line loads: " + XYZ, "points?": "area loads: list of " + XYZ + " corners of a region of the panel; default all of it"}),
     },
     "Links": {
         "cad_link": ("Link (or import) a DWG / DXF file.",
@@ -676,6 +986,18 @@ EDIT_GROUPS: dict[str, Group] = {
                       "cad_units?": "auto (default) | mm | cm | m | ft | in - give them when the DWG is unitless",
                       "colors?": "preserve (default) | black_white | invert", "visible_layers_only?": "default false", "pin?": "default true"}),
         "revit_link": ("Link another Revit model.", {"path": "full path of the .rvt", "placement?": PLACEMENT, "pin?": "default true"}),
+        "link_reload": ("Reload a Revit link or a linked CAD file, or reload it from another file (change its path). Runs after the commit "
+                        "(Revit reloads in its own transaction): a dry run only checks.",
+                        {"link": "Revit link (instance id, type id or file name) or linked CAD file id, from list_links",
+                         "path?": "reload from this file instead (.rvt for a Revit link, .dwg / .dxf for CAD)"}),
+        "link_unload": ("Unload a Revit link (moved shared positions are not saved back to it). Runs after the commit; a dry run only checks. "
+                        "Revit's API cannot unload CAD links.",
+                        {"link": "Revit link (instance id, type id or file name)",
+                         "for?": "everyone (default) | me: unload only for you in a workshared model"}),
+        "link_set": ("Change a link: pin / unpin it, overlay or attachment, relative or absolute path.",
+                     {"link": "Revit link (instance id, type id or file name) or linked CAD file id",
+                      "pinned?": "true / false", "attachment?": "overlay | attachment (Revit links)",
+                      "path_type?": "relative | absolute (Revit links)"}),
     },
     "Export and save": {
         "export_dwg": ("Export views / sheets to DWG (one file per view, named by name_template).",
@@ -714,6 +1036,32 @@ def _flatten(groups: dict[str, Group]) -> Group:
 READ_ACTIONS: Group = _flatten(READ_GROUPS)
 EDIT_OPS: Group = _flatten(EDIT_GROUPS)
 
+WORKSHARE_NOTE = (
+    "These talk to the central model, cannot be undone and have no dry run, so each is its own action (never inside edit). "
+    "They need the same one-time edit permission. sync_with_central and relinquish also need confirm: true: ask the user "
+    "first, every time. Revit then shows its own Yes/No dialog for that one action: the first call returns permission "
+    "'not granted'; after the user clicks Yes, send the same request again within 5 minutes. "
+    "Pass document_id from ping to make sure the right model is synced."
+)
+WORKSHARE_GROUPS: dict[str, Group] = {
+    "Worksharing": {
+        "sync_with_central": ("Synchronize the active workshared model with its central (server or Autodesk Docs): send your changes, "
+                              "receive others', relinquish by choice. Reports what you held before and after.",
+                              {"confirm": "true, after the user agreed to this sync", "comment?": "sync comment",
+                               "relinquish?": "all (default) | borrowed (elements only, keep worksets) | none",
+                               "compact?": "default false", "save_local?": "default true: save the local file before and after (always on for cloud models, Revit requires it)",
+                               "document_id?": "documentId from ping", "operation_id?": "request ID"}),
+        "reload_latest": ("Bring other users' synced changes into this model (no changes are sent).",
+                          {"document_id?": "documentId from ping", "operation_id?": "request ID"}),
+        "relinquish": ("Give back what you hold in the central model without synchronising (only what is not modified locally).",
+                       {"confirm": "true, after the user agreed", "what?": "all (default) | borrowed (elements) | worksets",
+                        "document_id?": "documentId from ping", "operation_id?": "request ID"}),
+        "checkout": ("Take ownership of elements and / or worksets in the central model before editing them.",
+                     {"ids?": IDS, "worksets?": "workset names", "document_id?": "documentId from ping", "operation_id?": "request ID"}),
+    },
+}
+WORKSHARE_ACTIONS: Group = _flatten(WORKSHARE_GROUPS)
+
 # --------------------------------------------------------------------------- rendering
 
 EDIT_PARAMS = {"operations": "list of edit operations", "document_id?": "documentId from ping: refuse if another model is active",
@@ -733,39 +1081,64 @@ NO_DESIGN_NOTE = (
 )
 
 
-def _signatures(groups: dict[str, Group]) -> list[str]:
-    """One heading per group, one line per entry: '- name(param, param?): summary'."""
+def _signatures(groups: dict[str, Group], summaries: bool = True) -> list[str]:
+    """One heading per group, one line per entry: '- name(param, param?): summary' (or without the summary)."""
     out: list[str] = []
     for title, group in groups.items():
         out.append(f"[{title}]")
-        out += [f"- {name}({', '.join(params)}): {summary}" if params else f"- {name}: {summary}"
-                for name, (summary, params) in group.items()]
+        for name, (summary, params) in group.items():
+            line = f"- {name}({', '.join(params)})" if params else f"- {name}"
+            out.append(f"{line}: {summary}" if summaries else line)
     return out
+
+
+def description_detail() -> str:
+    """How much the tool description spells out: 'full' (default: every action and edit operation with its summary
+    and parameters) or, with REVIT_MCP_DESCRIPTION=compact, names and parameter names only (about 40% of the text;
+    what each does comes from action='help')."""
+    return "compact" if os.environ.get("REVIT_MCP_DESCRIPTION", "").strip().lower() == "compact" else "full"
+
+
+COMPACT_NOTE = (
+    "The lists below give names and parameter names only. Before the first use of an action or edit operation in a "
+    "conversation, call action='help' with topic=<name>, a list of names or a [group] title: it returns what it does "
+    "and what every parameter means. Do not guess a parameter's format."
+)
 
 
 def tool_description(mode: str = "all") -> str:
     """Text Claude sees for the MCP tool. mode: 'all', 'read' or 'edit'."""
+    full = description_detail() == "full"
     out: list[str] = []
     if mode in ("all", "read"):
         out.append("Work with the model open in Autodesk Revit on this computer. Call with action=<name> and params={...}. "
-                   "Reading never changes anything. Parameters ending in ? are optional. action='help' returns every "
+                   "Export actions write files. Session and selection actions change application state. "
+                   "Parameters ending in ? are optional. action='help' returns every "
                    "parameter description.")
         out.append(UNITS_NOTE)
         out.append(NO_DESIGN_NOTE)
+        if not full:
+            out.append(COMPACT_NOTE)
         out.append("\nREAD ACTIONS")
-        out += _signatures(READ_GROUPS)
+        out += _signatures(READ_GROUPS, full)
         out += _signatures({"Help": {k: v for k, v in LOCAL_ACTIONS.items()
                                       if mode == "all" or k not in ("params_from_excel", "excel_to_model")}})
     if mode in ("all", "edit"):
         if mode == "edit":
             out.append(UNITS_NOTE)
             out.append(NO_DESIGN_NOTE)
+            if not full:
+                out.append(COMPACT_NOTE.replace("call action='help'", "call the read tool's action='help'"))
         out.append("\nEDIT ACTION\n- edit(" + ", ".join(EDIT_PARAMS) + "): " + EDIT_ACTION)
         if mode == "edit":
             out += _signatures({"Excel edits (pass name as excel_action)": {
                 name: LOCAL_ACTIONS[name] for name in ("params_from_excel", "excel_to_model")}})
+        out.append("\nWORKSHARING ACTIONS (own actions, not edit operations): " + WORKSHARE_NOTE)
+        if mode == "edit":
+            out.append("Pass the name as worksharing_action and its arguments as worksharing_params.")
+        out += _signatures(WORKSHARE_GROUPS)
         out.append("\nEDIT OPERATIONS (each is {op: name, ...})")
-        out += _signatures(EDIT_GROUPS)
+        out += _signatures(EDIT_GROUPS, full)
         out.append("\nElements are addressed by the 'id' the read actions return; levels, views, sheets and types by name. "
                    "Types must exist in the model (list_types; family_load / type_duplicate add more). Before a large edit, "
                    "read the relevant lists, then send ONE batch; later operations of a batch can use levels and types made "
@@ -773,17 +1146,35 @@ def tool_description(mode: str = "all") -> str:
     return "\n".join(out)
 
 
-def help_data(topic: str | None = None) -> dict:
+def help_data(topic: str | list[str] | None = None) -> dict:
     def full(entries: Group) -> dict:
         return {name: {"summary": summary, "params": params} for name, (summary, params) in entries.items()}
 
     edit = {"summary": EDIT_ACTION, "params": EDIT_PARAMS}
+    if isinstance(topic, list):
+        if not topic or len(topic) > 40 or any(not isinstance(t, str) or not t.strip() for t in topic):
+            raise ValueError("topic must be a name or a list of 1 to 40 names.")
+        merged: dict = {}
+        for one in topic:
+            merged.update(help_data(one))
+        return merged
+    if topic is not None and not isinstance(topic, str):
+        raise ValueError("topic must be a name or a list of names.")
+    if topic is not None:
+        topic = topic.strip().strip("[]")
+        # a group title as the tool description prints it, e.g. 'Quantities' or 'Model QA'
+        for groups, kind in ((READ_GROUPS, "read actions"), (EDIT_GROUPS, "edit operations (use inside action 'edit')"),
+                             (WORKSHARE_GROUPS, "worksharing actions")):
+            for title, group in groups.items():
+                if title.casefold() == topic.casefold() and topic not in READ_ACTIONS and topic not in EDIT_OPS:
+                    return {title: {"kind": kind, "entries": full(group)}}
     if topic is None:
         return {"units": UNITS_NOTE, "noDesign": NO_DESIGN_NOTE, "readActions": full(READ_ACTIONS), "localActions": full(LOCAL_ACTIONS),
-                "edit": edit, "editOperations": full(EDIT_OPS)}
+                "edit": edit, "editOperations": full(EDIT_OPS), "worksharing": {"note": WORKSHARE_NOTE, "actions": full(WORKSHARE_ACTIONS)}}
     if topic == "edit":
         return {"edit": {**edit, "operations": full(EDIT_OPS)}}
-    for entries, kind in ((READ_ACTIONS, "action"), (LOCAL_ACTIONS, "action"), (EDIT_OPS, "edit operation (use inside action 'edit')")):
+    for entries, kind in ((READ_ACTIONS, "action"), (LOCAL_ACTIONS, "action"), (WORKSHARE_ACTIONS, "worksharing action (changes the central model)"),
+                          (EDIT_OPS, "edit operation (use inside action 'edit')")):
         if topic in entries:
             summary, params = entries[topic]
             return {topic: {"summary": summary, "params": params, "kind": kind}}

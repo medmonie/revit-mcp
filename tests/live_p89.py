@@ -10,14 +10,26 @@ The first edit of a Revit session opens Revit's 'allow editing' dialog: the scri
 import json
 import sys
 import time
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
-from bridge_client import call  # noqa: E402
+import bridge_client  # noqa: E402
 
 MODE = sys.argv[1] if len(sys.argv) > 1 else ""
-EXPORT_DIR = r"C:\Users\mohamed.hamed\Desktop\Revit\mcp_export_test"
+EXPORT_DIR = tempfile.mkdtemp(prefix="RevitMcp-P89-")
 FAILED = []
+
+# Bind the initial model check and every subsequent read/edit to one document.
+connection = bridge_client.pin()
+info = bridge_client.call("get_project_info", connection=connection)
+document_id = info.get("documentId")
+if not document_id:
+    raise SystemExit("The bridge did not identify the active test document.")
+
+
+def call(method, params=None, **kwargs):
+    return bridge_client.call(method, {**(params or {}), "document_id": document_id}, connection=connection, **kwargs)
 
 
 def out(title, value):
@@ -48,7 +60,7 @@ def edit(title, operations, dry_run, expect_error=False):
             FAILED.append(title)
         return None
     out(title, res)
-    ok = (res.get("previewSucceeded") if dry_run else res.get("applied")) and not res.get("error")
+    ok = (res.get("previewSucceeded") if dry_run else res.get("applied") and res.get("succeeded")) and not res.get("error")
     if bool(ok) == expect_error:
         FAILED.append(title + (" (expected an error)" if expect_error else ""))
     return res
@@ -94,7 +106,6 @@ def first(items, key="id"):
     return items[0][key] if items else None
 
 
-info = call("get_project_info", {})
 out("get_project_info (before)", {k: info.get(k) for k in ("title", "path", "hasUnsavedChanges", "counts")})
 
 # ------------------------------------------------------------------ reads (both modes)
@@ -290,3 +301,4 @@ else:
 after = call("get_project_info", {})
 out("get_project_info (after)", {k: after.get(k) for k in ("title", "hasUnsavedChanges", "counts")})
 print("\nALL CHECKS AS EXPECTED" if not FAILED else "\nNOT AS EXPECTED: " + "; ".join(FAILED))
+sys.exit(1 if FAILED else 0)

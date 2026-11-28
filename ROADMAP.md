@@ -1,7 +1,7 @@
 # Roadmap
 
 Planned and finished work for the Revit MCP bridge, by phase. S = one build batch, M = one or two batches with a live
-test, L = several batches. Status as of version 0.30.1 (28 November 2026).
+test, L = several batches. Status as of version 0.31.0 (28 November 2026).
 
 | Status | Meaning |
 |---|---|
@@ -134,17 +134,17 @@ The whole Revit API (2024 and 2027: 2,713 public types) is mapped against the br
 | Load cases, combinations and loads: read | Read | Medium | M | Done (tested 0.30.0 on 2024 and 2027) |
 | Place loads and load cases from given values (no load derivation) | Edit | Low | L | Done (0.22.0: load cases, combinations, hosted point / line / area loads; analytical members and panels; 0.30.0: end releases, point / line / area supports; 0.22.0 checks passed on Revit 2027) |
 
-## Phase 11 - Architectural and site modelling (partly done; the rest moves to phase 17)
+## Phase 11 - Architectural and site modelling (done except pile caps and DirectShape; the architecture rows were done in phase 17)
 
 | Feature | Read / edit | Priority | Effort | Status |
 |---|---|---|---|---|
 | Pile caps and piles from a layout or Excel | Edit | Medium | S | Planned |
-| Roofs and ceilings | Edit | Low | M | Planned |
-| Slab edges and wall sweeps | Edit | Low | M | Planned |
-| Stairs, railings, ramps | Edit | Low | L | Planned |
-| Curtain walls and grids | Edit | Low | L | Planned |
-| Rooms, areas, spaces: read, create | Read + Edit | Low | M | Done (0.21.0 read; 0.22.0 rooms and spaces at points or every region, separation lines; areas not yet) |
-| Topography and site (toposolid) | Edit | Low | M | Planned |
+| Roofs and ceilings | Edit | Low | M | Done in phase 17 (0.31.0) |
+| Slab edges and wall sweeps | Edit | Low | M | Done in phase 17 (0.31.0) |
+| Stairs, railings, ramps | Edit | Low | L | Done in phase 17 (0.31.0; ramps not possible) |
+| Curtain walls and grids | Edit | Low | L | Done in phase 17 (0.31.0) |
+| Rooms, areas, spaces: read, create | Read + Edit | Low | M | Done (0.21.0 read; 0.22.0 rooms and spaces at points or every region, separation lines; 0.31.0 area plans, boundaries and areas) |
+| Topography and site (toposolid) | Edit | Low | M | Done in phase 17 (0.31.0) |
 | Imported or free-form geometry (DirectShape) | Edit | Low | M | Planned |
 
 ## Phase 12 - Worksharing (done)
@@ -195,22 +195,22 @@ The whole Revit API (2024 and 2027: 2,713 public types) is mapped against the br
 | Colour fill schemes; arc-length and ordinate dimensions; sheet collections and STEP export (2027) | Edit | P3 | M | Done 0.30 (color_fill_scheme_set with legend; ordinate dimensions through a dimension 'type'; sheet_collection_set and export_step on 2027). Arc-length dimensions: Not possible in projects (the API makes them in families only) |
 | Autodesk (ACC) parameters service | Edit | P3 | M | Closed 0.30 (acc_parameter_add by the service's parameter id; refusals tested; closed without a live add: no ACC parameter is available to test with) |
 
-## Phase 17 - Architecture (proposed; for the architecture department; takes over the rest of phase 11)
+## Phase 17 - Architecture (done in 0.31.0; for the architecture department; took over the rest of phase 11)
 
 Values (sizes, ratings, finishes, heights) come from the architect; nothing is designed or code-checked.
 
 | Feature | Read / edit | Priority | Effort | Status |
 |---|---|---|---|---|
-| Doors and windows hosted in walls at given positions (type, sill / head height, flip) | Edit | P1 | M | Planned |
-| Wall layers, finishes and wall types from given layers | Edit | P1 | M | Planned |
-| Room data: finishes, occupancy, names / numbers from Excel; room-data and finish sheets to Excel | Read + Edit | P1 | M | Planned |
-| Door, window, room and finish schedules | Edit | P1 | S | Planned |
-| Architectural QA: untagged / unplaced / not enclosed rooms, door and window marks, naming | Read | P1 | S | Planned |
-| Area plans and area schemes (gross, rentable), colour fill schemes | Edit | P2 | M | Planned |
-| Ceilings and roofs (footprint, slope from given values) | Edit | P2 | M | Planned |
-| Curtain walls: grids, mullions, panels | Edit | P2 | L | Planned |
-| Stairs, railings, ramps from given risers / treads / widths | Edit | P3 | L | Planned |
-| Slab edges, wall sweeps and reveals; toposolid and site | Edit | P3 | M | Planned |
+| Doors and windows hosted in walls at given positions (type, sill / head height, flip) | Edit | P1 | M | Done 0.31 (door_window_place: by distance along the wall, by point, or by point alone on a level; sill / head, flips, mark; rooms either side reported) |
+| Wall layers, finishes and wall types from given layers | Edit | P1 | M | Done 0.31 (layered_type_create for walls, floors, roofs, ceilings: function, material, thickness, core; read type_layers) |
+| Room data: finishes, occupancy, names / numbers from Excel; room-data and finish sheets to Excel | Read + Edit | P1 | M | Done 0.31 (room_finishes: finishes and floor / ceiling / gross and net wall areas measured from each room, its doors and windows; room_report workbook; data from Excel by params_to_excel / params_from_excel) |
+| Door, window, room and finish schedules | Edit | P1 | S | Done 0.31 (schedule_create presets doors, windows, rooms, room_finishes, sorted by mark / number) |
+| Architectural QA: untagged / unplaced / not enclosed rooms, door and window marks, naming | Read | P1 | S | Done 0.31 (arch_qa; room / area / space tags in tag_elements; naming by check_names) |
+| Area plans and area schemes (gross, rentable), colour fill schemes | Edit | P2 | M | Done 0.31 (area_plan_create in an existing scheme, area_boundary from lines or the walls' outside / inside / own faces / centre, area_create; colour fill by color_fill_scheme_set). Creating a new area scheme: not possible (no API) |
+| Ceilings and roofs (footprint, slope from given values) | Edit | P2 | M | Done 0.31 (ceiling_create at a height, holes, slope arrow; roof_create footprint with a slope per edge, overhang, base offset) |
+| Curtain walls: grids, mullions, panels | Edit | P2 | L | Done 0.31 (curtain_grid_set: vertical / horizontal grid lines, mullions on them, panel types at points; curtain walls by wall_create with a curtain type) |
+| Stairs, railings, ramps from given risers / treads / widths | Edit | P3 | L | Done 0.31 for stairs and railings (stairs_create: risers, tread, width, runs, landings, railing type; railing_create along a path or on stairs). Ramps: not possible (no API to create them; railings on existing ramps work) |
+| Slab edges, wall sweeps and reveals; toposolid and site | Edit | P3 | M | Done 0.31 (slab_edge_create on a floor's top edges, wall_sweep_create sweeps / reveals, toposolid_create from survey points) |
 
 ## Phase 18 - MEP and HVAC (done: 0.25.4, 0.26.3, 0.27.0, 0.28.0 and 0.29.0; for the MEP department; takes over the rest of phase 13)
 
@@ -242,6 +242,7 @@ equipment capacity, sizes, flow rates, lighting levels, circuit loads) come from
 | Point clouds, extensible storage, creating family geometry, fabrication parts | Out of scope |
 | Move elements into a design option; non-shared project parameters | Not possible (no API) |
 | Create spot slopes; radial dimensions in Revit 2024 | Not possible (no API) |
+| Create ramps; create area schemes | Not possible (no API) |
 
 ## Open checks
 

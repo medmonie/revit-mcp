@@ -103,6 +103,9 @@ internal static class Registry
         // model QA
         Read("check_materials", QaRead.CheckMaterials);
         Read("check_names", QaRead.CheckNames);
+        Read("type_layers", ArchRead.TypeLayers);
+        Read("room_finishes", ArchRead.RoomFinishes);
+        Read("arch_qa", ArchRead.ArchQa);
         Read("find_overlaps", OverlapRead.FindOverlaps);
         // model management
         Read("model_health", ManageRead.ModelHealth);

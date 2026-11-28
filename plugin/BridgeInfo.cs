@@ -4,7 +4,7 @@ namespace RevitMcpBridge;
 internal static class BridgeInfo
 {
     /// <summary>Keep server/catalog.py BRIDGE_VERSION in step; the tests check it.</summary>
-    public const string Version = "0.30.1";
+    public const string Version = "0.31.0";
 
     /// <summary>%LOCALAPPDATA%\RevitMcpBridge: bridge.json (connection details) and audit.log.</summary>
     public static string DataFolder => IOPath.Combine(

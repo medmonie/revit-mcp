@@ -167,6 +167,19 @@ async def single_tool(bridge_file: Path) -> None:
             print("mep_report ok: runs by system / size / type / level, counts, insulation, electrical, formulas, overwrite protection")
 
             with tempfile.TemporaryDirectory() as out:
+                xlsx = Path(out) / "Rooms.xlsx"
+                rep = await run(session, "room_report", {"path": str(xlsx)})
+                assert rep["sheets"] == ["Summary", "Rooms", "Finishes", "By finish", "Wall faces by type", "Openings", "QA", "Notes"], rep["sheets"]
+                assert rep["rooms"] == 2 and rep["skipped"] == 1 and any("no mark" in w for w in rep["warnings"]), rep
+                from openpyxl import load_workbook
+                wb = load_workbook(xlsx)
+                assert wb["Finishes"]["E4"].value == "=SUM(E2:E3)", wb["Finishes"]["E4"].value
+                assert wb["By finish"]["B3"].value == '=SUMIF(Finishes!D2:D3,"Tiles",Finishes!E2:E3)', wb["By finish"]["B3"].value
+                assert wb["Wall faces by type"]["C2"].value == 90.0
+                await expect_error(session, "room_report", {"path": str(xlsx)}, "already exists")
+            print("room_report ok: rooms, finishes with measured areas, totals per finish (formulas), wall faces, openings, QA")
+
+            with tempfile.TemporaryDirectory() as out:
                 from openpyxl import load_workbook
                 px = Path(out) / "params.xlsx"
                 exp = await run(session, "params_to_excel", {"path": str(px), "category": "columns", "params": ["Mark", "Comments"]})

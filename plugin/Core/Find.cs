@@ -73,6 +73,9 @@ internal static class Find
         ["mechanical_equipment"] = BuiltInCategory.OST_MechanicalEquipment, ["plumbing_fixtures"] = BuiltInCategory.OST_PlumbingFixtures,
         ["furniture"] = BuiltInCategory.OST_Furniture, ["curtain_panels"] = BuiltInCategory.OST_CurtainWallPanels,
         ["openings"] = BuiltInCategory.OST_ShaftOpening, ["sheets"] = BuiltInCategory.OST_Sheets,
+        ["slab_edges"] = BuiltInCategory.OST_EdgeSlab, ["wall_sweeps"] = BuiltInCategory.OST_Cornices, ["reveals"] = BuiltInCategory.OST_Reveals,
+        ["mullions"] = BuiltInCategory.OST_CurtainWallMullions, ["curtain_wall_mullions"] = BuiltInCategory.OST_CurtainWallMullions,
+        ["railings"] = BuiltInCategory.OST_StairsRailing, ["toposolids"] = BuiltInCategory.OST_Toposolid,
     };
 
     public static string CategoryHelp => "an alias (" + string.Join(", ", Aliases.Keys.Take(14)) + ", ...), a Revit category name " +

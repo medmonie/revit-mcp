@@ -44,6 +44,8 @@ internal static class EditEngine
         DocExtraOps.Register(Ops);
         FixtureOps.Register(Ops);
         ElectricalOps.Register(Ops);
+        ArchOps.Register(Ops);
+        ArchBuildOps.Register(Ops);
     }
 
     public static List<string> OperationNames => Ops.Keys.OrderBy(k => k).ToList();

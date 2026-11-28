@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 
-BRIDGE_VERSION = "0.30.1"   # keep plugin/BridgeInfo.cs in step; the tests check it
+BRIDGE_VERSION = "0.31.0"   # keep plugin/BridgeInfo.cs in step; the tests check it
 
 Entry = tuple[str, dict[str, str]]
 Group = dict[str, Entry]
@@ -329,6 +329,18 @@ READ_GROUPS: dict[str, Group] = {
                          {"lines?": "list of [" + XYZ + ", " + XYZ + "]", "boxes?": "list of [min " + XYZ + ", max " + XYZ + "]", "color?": "default #FF6600"}),
         "preview_clear": ("Remove previews.", {"preview?": "one preview id; default all"}),
     },
+    "Architecture": {
+        "type_layers": ("Layers of wall, floor, roof or ceiling types: function, material, thickness, core, variable layer, total thickness "
+                        "(walls exterior to interior, others top to bottom).",
+                        {"types?": "type names or ids", "kind?": "wall (default) | floor | roof | ceiling: every type of that kind", "limit?": "default 200"}),
+        "room_finishes": ("Per room: the finish parameters (floor, wall, ceiling, base), department, occupancy, and the areas measured from the room's "
+                          "own geometry at the finish faces: floor, ceiling, gross wall area per bounding element (category, type, in a link or not), "
+                          "the doors and windows in its walls with their sizes, and the net wall area. Nothing is chosen or priced.",
+                          {"ids?": "room ids", "level?": "only rooms on this level", "limit?": "default 500"}),
+        "arch_qa": ("Architectural QA: rooms unplaced, not enclosed, without name or number, with a duplicate number or not tagged; doors and "
+                    "windows without a mark, with a duplicate mark, not tagged, without a host; doors with a room on neither side.",
+                    {"level?": "only this level", "limit?": "items listed per problem, default 50"}),
+    },
     "Meta": {
         "family_inspect": ("Look inside a loaded family (opened in memory, never saved): its placement and hosting (host, work-plane-based, "
                            "always vertical, cut with voids when loaded), parameters (instance / type, formula), solids with "
@@ -361,6 +373,11 @@ LOCAL_ACTIONS: Group = {
                    {"path": "full path of the .xlsx to write", "overwrite?": "default false", "level?": "only this level", "view?": VIEW,
                     "category?": "one MEP category or a list; default all runs", "link?": "read a loaded link instead (from list_links)", "insulation?": "default true",
                     "electrical?": "default true", "document_id?": "documentId to require"}),
+    "room_report": ("Write a room data and finishes workbook (.xlsx) on this computer: rooms (number, name, level, area, perimeter, height, "
+                    "department, occupancy), finishes with the areas measured from each room (floor, ceiling, gross / net wall), totals per "
+                    "finish, wall faces by type, doors and windows per room, architectural QA, notes; totals are Excel formulas. Reads only; writes the file.",
+                    {"path": "full path of the .xlsx to write", "overwrite?": "default false", "level?": "only this level",
+                     "qa?": "default true (arch_qa sheet)", "limit?": "rooms, default 2000", "document_id?": "documentId to require"}),
     "bbs_report": ("Write a bar bending schedule workbook (.xlsx) on this computer from the model's reinforcement: BBS sheet (member, "
                    "mark, type, diameter, shape, number, length, A..J, total length, weight), summary by diameter and member. "
                    "A complete selection of up to 50,000 sets is required. Narrow larger selections by hosts, level or view.",
@@ -518,7 +535,8 @@ EDIT_GROUPS: dict[str, Group] = {
                              {"point": XY + " position of the marker", "plan?": "plan view name; default: the active view",
                               "directions?": "list of north | east | south | west; default all four", "name?": "prefix; views are named '<prefix> - North' ...",
                               "scale?": "default 100"}),
-        "tag_elements": ("Tag elements in a plan, section or elevation with their category's loaded tag; already tagged ones are skipped.",
+        "tag_elements": ("Tag elements in a plan, section or elevation with their category's loaded tag; already tagged ones are skipped. "
+                         "Rooms, areas and spaces get room / area / space tags at their point (plan views; areas in their area plan).",
                          {"category?": "one or a list (or give ids)", "ids?": IDS, "view?": VIEW, "tag_type?": "a specific tag type",
                           "leader?": "default false", "orientation?": "horizontal (default) | vertical", "skip_tagged?": "default true"}),
         "dimension_grids": ("Chain dimensions across each set of parallel straight grids in a plan view.",
@@ -527,8 +545,10 @@ EDIT_GROUPS: dict[str, Group] = {
         "sheet_create": ("Create a sheet.", {"number?": "", "name?": "", "title_block?": "title-block type; default: the first one; 'none' for an empty sheet"}),
         "viewport_place": ("Place a view, legend or schedule on a sheet.", {"sheet": "sheet number, name or id", "view": "view name or id",
                                                         "position?": XY + " on the sheet; default: the centre"}),
-        "schedule_create": ("Create a schedule of a category with the fields you name.",
-                            {"category": CATEGORY, "fields": "list of field names as in Revit's schedule dialog (e.g. Type, Level, Volume, Count)", "name?": ""}),
+        "schedule_create": ("Create a schedule of a category with the fields you name, or from a preset (doors, windows, rooms, room "
+                            "finishes: the usual fields, those the category lacks skipped and listed), sorted by a field.",
+                            {"category?": CATEGORY + " (not with preset)", "fields?": "list of field names as in Revit's schedule dialog (e.g. Type, Level, Volume, Count)",
+                             "preset?": "doors | windows | rooms | room_finishes", "sort_by?": "a field of the schedule (presets sort by Mark / Number)", "name?": ""}),
         "text_note_create": ("Place a text note in a view.", {"position": XY, "text": "", "view?": VIEW, "type?": "text type name"}),
         "model_lines_create": ("Draw model lines in 3D.", {"lines": "list of " + SEGMENT}),
     },
@@ -1026,6 +1046,60 @@ EDIT_GROUPS: dict[str, Group] = {
                            {"kind": "duct | pipe | cable_tray | conduit", "level": LEVEL, "runs": "list of {start: " + XYZ + ", end: " + XYZ + "} (z defaults to the level)",
                             "type?": "type name or id; default the first", "system?": "ducts and pipes: system type name; default the first",
                             "diameter?": "round ducts, pipes, conduits", "width?": "rectangular ducts, trays", "height?": "rectangular ducts, trays"}),
+    },
+    "Architecture": {
+        "door_window_place": ("Doors or windows of the type given in walls: each at a point (projected onto the wall's line) or at a distance "
+                              "along the wall from its start, with the sill or head height, flips and mark given. Without 'wall', the wall "
+                              "through the point on the level given is used. Sizes come from the type; positions and heights are the architect's.",
+                              {"type": TYPE + " (door or window)", "items": "list of {wall?: id, at?: " + XY + ", distance?: along the wall from its start, "
+                               "level?: " + LEVEL + ", sill_height?, head_height?, flip_facing?, flip_hand?, mark?}",
+                               "level?": "default level for items given by point only", "sill_height?": "for all items (or head_height)",
+                               "head_height?": "for all items", "tolerance?": "how far the point may sit outside the wall, default 50 mm"}),
+        "layered_type_create": ("A wall, floor, roof or ceiling type with the layers given (walls exterior to interior, others top to bottom): "
+                                "function, material and thickness each; the core spans the structure layers unless 'core' says otherwise. "
+                                "Made by duplicating a layered type of that kind; if_exists update gives an existing type the new layers.",
+                                {"kind": "wall | floor | roof | ceiling", "name": "new type name",
+                                 "layers": "list of {function: structure | substrate | insulation | membrane | finish1 | finish2, material?: name "
+                                           "(default By Category), thickness (none for a membrane)}",
+                                 "core?": "[first, last] layer number (1-based) of the core", "base_type?": "type to duplicate; default the first layered one",
+                                 "if_exists?": "fail (default) | update"}),
+        "area_plan_create": ("An area plan of a level in an existing area scheme (gross building by default; the API cannot create schemes).",
+                             {"level": LEVEL, "scheme?": "area scheme name", "name?": "view name"}),
+        "area_boundary": ("Area boundary lines in an area plan: the segments given, or one along each straight wall of the plan's level (or the walls "
+                          "given) at the face the architect names (the building's outside / inside, found from the walls' outline, or a wall's "
+                          "own exterior / interior side or centre), extended past the ends so corners close.",
+                          {"view": "area plan name or id", "lines?": "list of " + SEGMENT, "from_walls?": "outside | inside (of the building) | exterior | interior (the wall's own sides, as drawn) | centre (instead of lines)",
+                           "walls?": "with from_walls: only these wall ids"}),
+        "area_create": ("Areas at the points given in an area plan, with names and numbers; warns about any not enclosed.",
+                        {"view": "area plan name or id", "points": "list of " + XY, "names?": "one per point", "numbers?": "one per point"}),
+        "ceiling_create": ("A ceiling from a closed outline on a level at the height given above it (holes, slope arrow as for floors).",
+                           {"level": LEVEL, "boundary": "list of [x,y] corners", "type?": "ceiling type; default the first", "height?": "above the level, default 0",
+                            "holes?": "list of outlines", "slope_arrow?": "{start: [x,y], end: [x,y]}", "slope?": "with slope_arrow: percent"}),
+        "roof_create": ("A footprint roof from the outline given on a level: every edge at one slope, a slope per edge (null = flat edge), or "
+                        "flat; with the overhang and base offset given. Reports the roof's top and bottom above the level.",
+                        {"level": LEVEL, "footprint": "list of [x,y] corners", "type?": "roof type; default the first", "slope?": "degrees, every edge",
+                         "slopes?": "degrees per edge in footprint order, null for a flat edge", "overhang?": "", "base_offset?": "from the level"}),
+        "curtain_grid_set": ("On a straight curtain wall: vertical grid lines at distances along the wall, horizontal ones at heights above its base, "
+                             "mullions of the type given on the new lines, and panel types at points (along, height).",
+                             {"wall": "curtain wall id", "u?": "distances along the wall from its start", "v?": "heights above the wall base",
+                              "mullion_type?": "mullion type for the new grid lines", "panels?": "list of {along, height, type: curtain panel type (or a door panel)}"}),
+        "stairs_create": ("Stairs between two levels from the architect's numbers: total risers, tread depth, run width, and runs (start point, a point "
+                          "it heads toward, risers in the run); each run is laid out risers - 1 treads long, rising from the risers before it; "
+                          "landings join consecutive runs; optional railings. Built after the commit (Revit's stairs edit scope).",
+                          {"base_level": LEVEL, "top_level": LEVEL, "risers": "total number of risers", "tread_depth": "", "width": "run width",
+                           "runs": "list of {start: [x,y], toward: [x,y], risers}", "type?": "stairs type", "justification?": "center (default) | left | right",
+                           "railing_type?": "add railings of this type", "railing_position?": "treads (default) | stringer"}),
+        "railing_create": ("A railing along a path (open or closed polyline) on a level, or on stairs / a ramp.",
+                           {"type?": "railing type; default the first", "level?": LEVEL + " (with path)", "path?": "list of [x,y] points",
+                            "closed?": "default false", "base_offset?": "", "stairs?": "stairs or ramp id (instead of path)", "position?": "treads (default) | stringer"}),
+        "slab_edge_create": ("Slab edges of the type given along a floor's top outer edges: all of them, or those nearest the points given.",
+                             {"floor": "floor id", "type?": "slab edge type; default the first", "near?": "list of [x,y]: the edge nearest each"}),
+        "wall_sweep_create": ("Wall sweeps or reveals (by the type's category) on walls: horizontal at a height above the base, or vertical at a "
+                              "distance from the wall start; exterior or interior side.",
+                              {"walls": IDS, "type": "wall sweep or reveal type", "height?": "horizontal: above the wall base", "vertical?": "default false",
+                               "along?": "vertical: from the wall start", "side?": "exterior (default) | interior"}),
+        "toposolid_create": ("A toposolid from survey points (x, y, z), optionally within an outline, on a level.",
+                             {"level": LEVEL, "points": "list of [x, y, z]", "boundary?": "list of [x,y] corners", "type?": "toposolid type; default the first"}),
     },
     "Rooms and spaces": {
         "room_create": ("Create rooms or MEP spaces at the points given, with the names and numbers given, or (all_regions) a room in every enclosed region "

@@ -120,6 +120,20 @@ def handle(method: str, params: dict):
                 "reviewPairCount": 1,
                 "reviewPairs": [{"a": {"id": 8, "label": "Columns : C9"}, "b": {"id": 9, "label": "Columns : C9"},
                                  "kind": "coincident_geometry", "overlap_m3": 1.15}]}
+    if method == "room_finishes":
+        return {"count": 2, "truncated": False, "skipped": [{"id": 9, "number": "9", "why": "unplaced"}], "note": "n", "rooms": [
+            {"id": 1, "number": "101", "name": "Office", "level": "L1", "areaM2": 20.0, "perimeter": 18000, "height": 3000,
+             "department": "Admin", "occupancy": "Office", "finishes": {"floor": "Tiles", "wall": "Paint", "ceiling": "Gypsum", "base": "Tile skirting"},
+             "measured": {"floorM2": 20.0, "ceilingM2": 20.0, "wallGrossM2": 54.0, "openingsM2": 4.1, "wallNetM2": 49.9, "openingsWithoutSize": 0},
+             "bounding": [{"id": 5, "category": "Walls", "type": "Basic Wall : Block 200", "inLink": False, "areaM2": 54.0}],
+             "openings": [{"id": 7, "wall": 5, "category": "Doors", "type": "Single : 900x2100", "width": 900, "height": 2100, "areaM2": 1.89}]},
+            {"id": 2, "number": "102", "name": "Store", "level": "L1", "areaM2": 8.0, "perimeter": 12000, "height": 3000,
+             "department": None, "occupancy": None, "finishes": {"floor": "Tiles", "wall": None, "ceiling": None, "base": None},
+             "measured": {"floorM2": 8.0, "ceilingM2": 8.0, "wallGrossM2": 36.0, "openingsM2": 0, "wallNetM2": 36.0, "openingsWithoutSize": 0},
+             "bounding": [{"id": 5, "category": "Walls", "type": "Basic Wall : Block 200", "inLink": False, "areaM2": 36.0}], "openings": []}]}
+    if method == "arch_qa":
+        return {"checkedRooms": 2, "issues": 1, "note": "n", "items": [{"what": "doors", "problem": "no mark", "count": 1,
+                "items": [{"id": 7, "mark": None, "type": "Single : 900x2100", "level": "L1", "host": 5}]}]}
     if method == "mep_quantities":
         by = params.get("group_by", "size")
         key = {"system": "Supply Air 1", "size": "600x300", "type": "Rect : Std", "level": "L1"}[by]

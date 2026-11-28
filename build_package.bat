@@ -34,7 +34,7 @@ echo [2/5] server exe >> "%LOG%"
 %PY% -m pip install -r server\requirements.txt pyinstaller >> "%LOG%" 2>&1 || goto fail
 %PY% -m PyInstaller --onefile --noconfirm --name revit-mcp-server --collect-all mcp --paths server ^
   --hidden-import catalog --hidden-import bridge_client --hidden-import excel_io --hidden-import qs_report ^
-  --hidden-import bbs_report --hidden-import mep_report --hidden-import xlsx_util --collect-submodules openpyxl ^
+  --hidden-import bbs_report --hidden-import mep_report --hidden-import room_report --hidden-import xlsx_util --collect-submodules openpyxl ^
   --distpath "%OUT%" --workpath "%STAGE%\_work" --specpath "%STAGE%\_work" server\server.py >> "%LOG%" 2>&1 || goto fail
 if not exist "%OUT%\revit-mcp-server.exe" goto fail
 

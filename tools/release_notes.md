@@ -8,11 +8,29 @@
    (all its settings files, 6.x included) and to Codex. Your other servers and your own `revit` settings are kept; each
    settings file is backed up first.
 3. Start Claude Desktop, start Revit, choose **Always Load** when asked, open a model and ask
-   *"Ping Revit and tell me which model is open."* (it shows 0.30.1).
+   *"Ping Revit and tell me which model is open."* (it shows 0.31.0).
 
 ChatGPT desktop shares the Codex settings (`~/.codex/config.toml`), so it gets the `revit` server from the same install
 (tool timeout 3600 s, startup 30 s). Uninstall: `uninstall.bat` from the same zip.
 Full guide: [README](https://github.com/medmonie/revit-mcp#readme).
+
+## New in 0.31.0 (83 read actions, 184 edit operations)
+
+Roadmap phase 17 (architecture) complete, tested live on Revit 2024 and 2027.
+
+**Areas, ceilings and roofs:** area plans, boundaries on the walls' outside faces and areas; ceilings at a height; footprint
+roofs with a slope per edge and overhang.
+**Curtain walls:** grid lines, mullions and panel types. **Stairs and railings:** stairs from the architect's risers,
+tread, width and runs with landings and railings; railings along a path. **Edges and site:** slab edges, wall sweeps and
+reveals, toposolids from survey points.
+
+**Doors and windows** in walls at a distance along the wall or at a point (the wall is found from the point and level),
+with sill or head height, flips and mark; the rooms on either side are reported.
+**Layered types:** wall, floor, roof and ceiling types from the architect's layers (function, material, thickness, core),
+read back with `type_layers`.
+**Rooms:** `room_finishes` measures floor, ceiling and wall areas per room at the finish faces, net of its doors and
+windows; `room_report` writes a room data and finishes workbook with totals per finish. Room, area and space tags.
+**Schedules and QA:** door, window, room and finish schedule presets; `arch_qa` for rooms, door and window marks and tags.
 
 ## New in 0.30.1
 

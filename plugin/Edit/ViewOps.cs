@@ -223,10 +223,29 @@ internal static class ViewOps
         return new { id = vp.Id.Value, sheet = sheet.SheetNumber, view = view.Name };
     }
 
+    /// <summary>Ready field lists for the architect's usual schedules (fields the category lacks are skipped and listed).</summary>
+    private static readonly Dictionary<string, (string cat, string[] fields, string sort)> Presets = new Dictionary<string, (string, string[], string)>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["doors"] = ("doors", new[] { "Mark", "Family and Type", "Level", "Width", "Height", "From Room: Number", "To Room: Number", "Fire Rating", "Comments" }, "Mark"),
+        ["windows"] = ("windows", new[] { "Mark", "Family and Type", "Level", "Width", "Height", "Sill Height", "Head Height", "Comments" }, "Mark"),
+        ["rooms"] = ("rooms", new[] { "Number", "Name", "Level", "Area", "Perimeter", "Unbounded Height", "Department", "Occupancy" }, "Number"),
+        ["room_finishes"] = ("rooms", new[] { "Number", "Name", "Level", "Floor Finish", "Base Finish", "Wall Finish", "Ceiling Finish", "Area" }, "Number"),
+    };
+
     private static object ScheduleCreate(EditContext c, Obj p)
     {
         var doc = c.Doc;
-        var cat = Find.Cat(doc, NeedStr(p, "category"));
+        (string cat, string[] fields, string sort)? preset = null;
+        if (Has(p, "preset"))
+        {
+            string pn = NeedStr(p, "preset");
+            if (!Presets.TryGetValue(pn, out var pr)) throw new ArgumentException($"'preset' must be one of: {string.Join(", ", Presets.Keys)}.");
+            preset = pr;
+            if (Has(p, "category") && Find.Cat(doc, NeedStr(p, "category")) != Find.Cat(doc, pr.cat))
+                throw new ArgumentException($"preset '{pn}' schedules {pr.cat}; leave 'category' out.");
+        }
+        else if (!Has(p, "category")) throw new ArgumentException("Give 'category' (with 'fields') or a 'preset'.");
+        var cat = Find.Cat(doc, preset?.cat ?? NeedStr(p, "category"));
         var schedule = ViewSchedule.CreateSchedule(doc, new ElementId(cat));
         Name(schedule, Str(p, "name"));
 
@@ -237,15 +256,27 @@ internal static class ViewOps
             string fieldName = sf.GetName(doc);
             if (!string.IsNullOrEmpty(fieldName) && !available.ContainsKey(fieldName)) available[fieldName] = sf;
         }
-        var added = new List<string>();
-        foreach (string field in StrList(p, "fields", 60))
+        var added = new List<string>(); var missing = new List<string>();
+        var ids = new Dictionary<string, ScheduleFieldId>(StringComparer.OrdinalIgnoreCase);
+        var wanted = Has(p, "fields") || preset == null ? StrList(p, "fields", 60) : preset.Value.fields.ToList();
+        foreach (string field in wanted)
         {
             if (!available.TryGetValue(field, out var sf))
+            {
+                if (preset != null && !Has(p, "fields")) { missing.Add(field); continue; }
                 throw new ArgumentException($"No schedulable field '{field}' for {cat}. Available: {string.Join(", ", available.Keys.OrderBy(k => k).Take(120))}");
-            def.AddField(sf);
+            }
+            ids[field] = def.AddField(sf).FieldId;
             added.Add(field);
         }
-        return new { id = schedule.Id.Value, name = schedule.Name, fields = added };
+        if (added.Count == 0) throw new ArgumentException($"None of the fields exist for {cat}.");
+        string sortBy = Str(p, "sort_by") ?? preset?.sort;
+        if (sortBy != null)
+        {
+            if (!ids.TryGetValue(sortBy, out var fid)) throw new ArgumentException($"'sort_by' must be one of the schedule's fields: {string.Join(", ", added)}.");
+            def.AddSortGroupField(new ScheduleSortGroupField(fid, ScheduleSortOrder.Ascending));
+        }
+        return new { id = schedule.Id.Value, name = schedule.Name, fields = added, sortedBy = sortBy, skippedFields = missing };
     }
 
     private static object TextNoteCreate(EditContext c, Obj p)

@@ -1,6 +1,6 @@
 # Revit MCP bridge
 
-**Version 0.30 · Autodesk Revit 2027 and 2024 · Windows**
+**Version 0.31 · Autodesk Revit 2027 and 2024 · Windows**
 
 Lets Claude work in the model that is open in Revit on this computer: read it, measure it, check it, and, after you allow
 it once per Revit session, build and fix it. One tool covers modelling, editing, quantity surveying, model QA, CAD to
@@ -59,7 +59,7 @@ the package includes the MCP server as one exe, so no Python, no .NET SDK and no
 3. Start Claude Desktop again.
 4. Start Revit. The first time it asks whether to load the unsigned add-in: choose **Always Load**. A panel
    **Claude MCP** appears on the **Add-Ins** tab.
-5. Open a model and ask: *"Ping Revit and tell me which model is open."* The answer shows the add-in version (0.30.1),
+5. Open a model and ask: *"Ping Revit and tell me which model is open."* The answer shows the add-in version (0.31.0),
    the Revit version, and the active model's `documentId`.
 
 **ChatGPT desktop app.** It shares Codex's settings file (`~/.codex/config.toml`), so the `revit` entry that
@@ -428,11 +428,28 @@ geometry; cover is to the outer face of the outermost bar. Review the bars in a 
 | "Which types have no keynote or assembly code?" | `list_keynotes` |
 | "Export the GA sheets to DWF and DGN, the 3D view to FBX, the model to gbXML." | `export_dwf`, `export_dgn`, `export_fbx`, `export_gbxml` |
 
+### 4.12 Architecture
+
+| Ask | Runs |
+|---|---|
+| "Make an external wall type: 15 gypsum, 200 block (core), 50 insulation, 15 gypsum." | `layered_type_create` (kind wall; floors, roofs and ceilings too); `type_layers` reads them back |
+| "Put door D01 in wall 4521, 3 m from its start; window W01 at this point on the south wall with a 900 sill." | `door_window_place` (by distance, by point, or by point alone with `level`) |
+| "Tag the rooms, doors and windows on L1." | `tag_elements` with `category` rooms, doors, windows |
+| "Door, window, room and finish schedules." | `schedule_create` with `preset` doors / windows / rooms / room_finishes |
+| "Floor, ceiling and wall areas per room with their finishes, net of the doors and windows." | `room_finishes`, or the workbook: `room_report` with `path` |
+| "Room names, numbers, finishes from Excel." | `params_to_excel` (category rooms), edit, then `params_from_excel` |
+| "Any unplaced or untagged rooms, doors without marks, duplicate marks?" | `arch_qa` |
+| "Gross building area of L1: area plan, boundary on the outside faces of the walls, one area." | `area_plan_create`, `area_boundary` with `from_walls` outside, `area_create` |
+| "A ceiling 2700 above L1 inside the walls; a gable roof on L2 at 30 degrees on the long sides." | `ceiling_create` with `height`; `roof_create` with `slopes` [30, null, 30, null] |
+| "Curtain wall grid every 1500, a transom at 1000, 2.5 in circular mullions, a solid panel bottom left." | `curtain_grid_set` with `u`, `v`, `mullion_type`, `panels` |
+| "Stairs L1 to L2: 21 risers, 280 treads, 1200 wide, two runs with a landing, glass railings." | `stairs_create` with `risers`, `tread_depth`, `width`, `runs`, `railing_type` |
+| "A guardrail along this edge; slab edges round the L2 slab; a cornice at 900 on the south wall; the site from survey points." | `railing_create`, `slab_edge_create`, `wall_sweep_create`, `toposolid_create` |
+
 ---
 
 ## 5. Feature reference
 
-One tool, `revit(action, params)`: 80 read actions, 9 server actions, 4 worksharing actions and 171 edit operations inside the single `edit`
+One tool, `revit(action, params)`: 83 read actions, 10 server actions, 4 worksharing actions and 184 edit operations inside the single `edit`
 action. Parameters for every one: [docs/ACTIONS.md](docs/ACTIONS.md).
 
 ### 5.1 Read actions (never change the model)
@@ -482,6 +499,7 @@ action. Parameters for every one: [docs/ACTIONS.md](docs/ACTIONS.md).
 | | `list_reinforcement_types` | Bar, hook, path / area / fabric, fabric sheet and wire, coupler and rebar annotation types |
 | | `list_schedules`, `get_schedule_data` | Schedules, and the rows of one as displayed |
 | Model QA | `check_materials` | Missing, default or wrongly named materials; steel with a non-metal material |
+| Architecture | `type_layers`, `room_finishes`, `arch_qa` | Layers of wall / floor / roof / ceiling types; finishes and measured floor, ceiling and net wall areas per room with its doors and windows; room, door and window QA |
 | | `find_overlaps` | Measured overlap pairs and direct coincidence or containment evidence |
 | | `check_names` | Names outside a naming convention (views, sheets, types, levels, grids, materials, families) |
 | Model management | `model_health` | File size, warnings, in-place families, CAD, links, views not on sheets, unused templates and groups, purgeable count, attention list |
@@ -505,6 +523,7 @@ action. Parameters for every one: [docs/ACTIONS.md](docs/ACTIONS.md).
 |---|---|
 | `help` | Every action and parameter, or one topic; flags differences between server and add-in |
 | `qs_report` | QS workbook (.xlsx) from the read actions; reads only, writes the file |
+| `room_report` | Room data and finishes workbook (.xlsx): rooms, finishes with measured areas, totals per finish, wall faces by type, openings, QA; reads only, writes the file |
 | `mep_report` | MEP quantities workbook (.xlsx): runs by system / size / type / level, fittings and devices, insulation, panels and circuits; reads only, writes the file |
 | `bbs_report` | Bar bending schedule workbook (.xlsx): BBS sheet, summary by diameter and member |
 | `params_to_excel` / `params_from_excel` | Parameters out to Excel and the changed cells back (the second changes the model) |
@@ -573,6 +592,13 @@ action. Parameters for every one: [docs/ACTIONS.md](docs/ACTIONS.md).
 | | `electrical_circuit_create`, `electrical_circuit_edit`, `electrical_panel_set` | Circuits from the engineer's list (loads, panel, rating, load name); change them; panel distribution system and name |
 | MEP | `mep_run_create` | Straight ducts, pipes, cable trays and conduits between points with given types, systems and sizes |
 | Rooms and spaces | `room_create`, `room_separation` | Rooms or spaces at points (names, numbers) or in every enclosed region; separation lines |
+| Architecture | `door_window_place` | Doors and windows in walls at a point or a distance along the wall; sill / head height, flips, mark |
+| | `layered_type_create` | Wall, floor, roof and ceiling types from given layers (function, material, thickness, core) |
+| | `area_plan_create`, `area_boundary`, `area_create` | Area plans in an existing scheme; boundaries from lines or the walls' outside / inside faces; areas with names and numbers |
+| | `ceiling_create`, `roof_create` | Ceilings at a height (holes, slope arrow); footprint roofs with a slope per edge, overhang, base offset |
+| | `curtain_grid_set` | Curtain wall grid lines along / up the wall, mullions on them, panel types at points |
+| | `stairs_create`, `railing_create` | Stairs from risers, tread, width and runs with landings and railings; railings along a path or on stairs |
+| | `slab_edge_create`, `wall_sweep_create`, `toposolid_create` | Slab edges on a floor's top edges; wall sweeps and reveals; toposolids from survey points |
 | Analytical model and loads | `analytical_member_create`, `analytical_panel_create` | Analytical members and panels, associated with physical elements |
 | | `load_case_create`, `load_combination_create`, `load_place` | Load cases; combinations from given factors; point, line and area loads with given values on analytical elements |
 | Links | `cad_link`, `revit_link`, `link_reload`, `link_unload`, `link_set` | Link or import DWG / DXF; link a Revit model; reload (also from another file), unload, pin, overlay / attachment, path type |

@@ -213,6 +213,12 @@ def _mep_report(params: dict[str, Any]) -> Any:
     return mep_report.build(pinned, params)
 
 
+def _room_report(params: dict[str, Any]) -> Any:
+    import room_report
+    pinned, _ = _workflow(params)
+    return room_report.build(pinned, params)
+
+
 COMMON_PARAMS = {"units", "document_id", "operation_id"}     # accepted by every action
 
 
@@ -303,6 +309,7 @@ LOCAL_READ = {
     "qs_report": _qs_report,
     "bbs_report": _bbs_report,
     "mep_report": _mep_report,
+    "room_report": _room_report,
     "params_to_excel": _excel("params_to_excel"),
     "excel_template": _excel("excel_template"),
     "list_revit_sessions": lambda params: {"sessions": _sessions()},

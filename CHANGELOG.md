@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.31.0 - 2026-11-28
+
+Roadmap phase 17 (architecture) done, with the architectural rows of phase 11. Tested live in scratch projects on Revit
+2027 and Revit 2024 (tests/live_v031.py and tests/live_v031b.py, nothing saved). Not possible through the API: creating
+ramps and area schemes.
+
+- area_plan_create (existing area scheme, gross building by default), area_boundary (segments, or lines along the walls at
+  the building's outside / inside faces found from the walls' outline, a wall's own exterior / interior side, or its centre;
+  extended so corners close), area_create (names, numbers; warns when not enclosed).
+- ceiling_create (height above the level, holes, slope arrow); roof_create (footprint; one slope, a slope per edge or flat
+  edges; overhang; base offset; reports the roof's top above the level).
+- curtain_grid_set: vertical grid lines at distances along a curtain wall, horizontal ones at heights, mullions of a type on
+  the new lines, panel types at points; reports the panel count and lines by direction.
+- stairs_create: from the architect's risers, tread depth, width and runs (start, direction, risers each): each run laid out
+  and raised from the risers before it, automatic landings, the railings Revit adds given the type asked for. Built after
+  the commit in Revit's stairs edit scope; a dry run lays the runs out without building.
+- railing_create along an open or closed path, or on stairs / a ramp; slab_edge_create on a floor's top outer edges (all or
+  those nearest points); wall_sweep_create (sweeps and reveals, horizontal or vertical, either side); toposolid_create from
+  survey points (optionally within an outline).
+- Category aliases: slab_edges, wall_sweeps, reveals, mullions, railings, toposolids.
+
+- door_window_place: doors and windows in walls at a distance along the wall, at a point (projected onto the wall's line,
+  refused when it lies off the wall), or at a point alone with a level (the wall through it is found); sill or head height,
+  flips and mark as given. Returns the rooms on either side of a door and the room of a window.
+- layered_type_create: wall, floor, roof and ceiling types from the layers given (structure, substrate, insulation,
+  membrane, finish 1 / 2; material; thickness); the core spans the structure layers unless 'core' is given; if_exists
+  update replaces an existing type's layers. The kind's end cap and opening wrapping are kept. Read back with type_layers.
+- room_finishes: per room the finish parameters, department, occupancy, and the floor, ceiling and wall areas measured from
+  the room's geometry at the finish faces; wall area per bounding element; the doors and windows in its walls with their
+  sizes; net wall area (gross minus openings with a known size).
+- room_report (server): workbook with rooms, finishes and measured areas, totals per finish (formulas), wall faces by type,
+  openings, QA and notes.
+- arch_qa: rooms unplaced / not enclosed / without name or number / duplicate number / untagged; doors and windows without
+  a mark, with a duplicate mark, untagged or without a host; doors with no room either side.
+- schedule_create: presets doors, windows, rooms, room_finishes (usual fields, those missing skipped and listed), sort_by.
+- tag_elements: rooms, areas and spaces get room / area / space tags (already tagged ones skipped).
+
 ## 0.30.1 - 2026-11-28
 
 Roadmap phases 5, 6, 8, 9 and 13 closed. Tested live in one session per release (tests/live_close_chain.py) on Revit

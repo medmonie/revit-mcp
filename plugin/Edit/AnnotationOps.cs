@@ -36,8 +36,17 @@ internal static class AnnotationOps
 
         var tagged = new HashSet<long>();
         if (Flag(p, "skip_tagged", true))
+        {
             foreach (IndependentTag t in new FilteredElementCollector(doc, view.Id).OfClass(typeof(IndependentTag)))
                 foreach (var id in t.GetTaggedLocalElementIds()) tagged.Add(id.Value);
+            // rooms, areas and spaces carry their own tag classes
+            foreach (var st in new FilteredElementCollector(doc, view.Id).OfClass(typeof(SpatialElementTag)))
+            {
+                if (st is Autodesk.Revit.DB.Architecture.RoomTag rt && rt.TaggedLocalRoomId != null) tagged.Add(rt.TaggedLocalRoomId.Value);
+                else if (st is AreaTag at && at.Area != null) tagged.Add(at.Area.Id.Value);
+                else if (st is Autodesk.Revit.DB.Mechanical.SpaceTag sp && sp.Space != null) tagged.Add(sp.Space.Id.Value);
+            }
+        }
 
         ElementId tagType = Has(p, "tag_type") ? Find.TypeOf(doc, Str(p, "tag_type"), null, typeof(FamilySymbol)).Id : null;
         bool leader = Flag(p, "leader", false);
@@ -52,6 +61,11 @@ internal static class AnnotationOps
             if (at == null) { failed["no location"] = failed.TryGetValue("no location", out int n0) ? n0 + 1 : 1; continue; }
             try
             {
+                if (e is SpatialElement spatial)
+                {
+                    ids.Add(SpatialTag(doc, view, spatial, at, tagType).Id.Value);
+                    continue;
+                }
                 var tag = tagType != null
                     ? IndependentTag.Create(doc, tagType, view.Id, new Reference(e), leader, orientation, at)
                     : IndependentTag.Create(doc, view.Id, new Reference(e), leader, TagMode.TM_ADDBY_CATEGORY, orientation, at);
@@ -68,6 +82,21 @@ internal static class AnnotationOps
                                                 ". Is a tag family for this category loaded (family_load)?");
         if (failed.Count > 0) c.Warn("not tagged: " + string.Join("; ", failed.Select(kv => $"{kv.Value} x {kv.Key}")));
         return new { view = view.Name, tagged = ids.Count, alreadyTagged = skipped, ids };
+    }
+
+    /// <summary>Rooms, areas and spaces take their own tags (room / area / space tag), at the element's point, in a plan (areas: their area plan).</summary>
+    private static Element SpatialTag(Document doc, View view, SpatialElement e, XYZ at, ElementId tagType)
+    {
+        if (!(view is ViewPlan plan)) throw new ArgumentException("rooms, areas and spaces are tagged in plan views");
+        if (e.Location is LocationPoint lp) at = lp.Point;
+        var uv = new UV(at.X, at.Y);
+        Element tag = e is Autodesk.Revit.DB.Architecture.Room room ? doc.Create.NewRoomTag(new LinkElementId(room.Id), uv, view.Id)
+            : e is Area area ? doc.Create.NewAreaTag(plan, area, uv)
+            : e is Autodesk.Revit.DB.Mechanical.Space space ? (Element)doc.Create.NewSpaceTag(space, uv, view)
+            : throw new ArgumentException("not a room, area or space");
+        if (tag == null) throw new InvalidOperationException("Revit made no tag (is a room / area / space tag family loaded, and is the element in this view?)");
+        if (tagType != null) tag.ChangeTypeId(tagType);
+        return tag;
     }
 
     /// <summary>A chain dimension across every set of parallel straight grids visible in a plan view.</summary>

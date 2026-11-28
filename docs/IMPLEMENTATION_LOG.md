@@ -1,5 +1,26 @@
 # Revit MCP implementation log
 
+## 2026-11-28 · Version 0.31.0 (phase 17 P2 / P3: areas, ceilings, roofs, curtain walls, stairs, railings, edges, sweeps, site)
+
+| Item | Change | Test |
+|---|---|---|
+| Areas | Edit/ArchBuildOps.cs: ViewPlan.CreateAreaPlan; NewAreaBoundaryLine; outside / inside face by ray-crossing parity against the level's wall lines (a wall's 'exterior' side faces in when drawn anticlockwise); NewArea | live_v031b: gross area 64.97 m2 = (10 + 0.3048) x (6 + 0.3048) on both years |
+| Ceilings, roofs | Ceiling.Create (+ CEILING_HEIGHTABOVELEVEL_PARAM); NewFootPrintRoof, set_DefinesSlope / set_SlopeAngle (tan of the angle) / set_Overhang | ceiling 53.76 m2 at 2700; gable top 1996 (1732 + thickness) |
+| Curtain walls | AddGridLine trying U / V and keeping the one with the asked direction; AddMullions; ChangePanelType at the panel containing the point | 3 vertical + 1 horizontal on a type with its own grid: 14 panels = 7 x 2; solid panel |
+| Stairs, railings | StairsEditScope after the commit (c.Defer); CreateStraightRun with z = risers before x riser height; CreateAutomaticLanding; Revit's own railings re-typed (adding fails: "already has associated railings"); Railing.Create on a path | 21 risers, 1 landing, 2 railings of the given type; 7 m railing |
+| Edges, sweeps, site | NewSlabEdge on top-face edge references (ComputeReferences); WallSweep.Create with WallSweepInfo; Toposolid.Create | 4 edges 32 m / 1 edge 10 m; cornice at 900; toposolid -406..1500 |
+| Aliases | slab_edges, wall_sweeps, reveals (subcategories: not found by UI name), mullions, railings, toposolids | list_types in live_v031b |
+
+## 2026-11-28 · Version 0.31.0 (phase 17 P1: architecture)
+
+| Item | Change | Test |
+|---|---|---|
+| Doors and windows | door_window_place (Edit/ArchOps.cs): NewFamilyInstance on the wall at a distance / projected point / point found on a level; sill / head (one of them), flips, mark; rooms either side | live_v031: door between Office and Store, windows by point and by distance; refusals off-wall point, beyond the wall end, sill + head, wrong type |
+| Layered types | layered_type_create: CreateSimpleCompoundStructure, shell layers around the core, IsValid, end cap / opening wrapping from the type duplicated (floors refuse the wall end cap); type_layers read | wall 280, floor 260, update, refusals (existing name, membrane thickness, unknown function) |
+| Room finishes | room_finishes (Read/ArchRead.cs): SpatialElementGeometryCalculator at finish faces, subfaces by bounding element, wall inserts by FromRoom / ToRoom with rough or nominal size | office floor = room area, door + window deducted, both wall types bound |
+| Room report | server/room_report.py (Rooms, Finishes, By finish formulas, Wall faces by type, Openings, QA, Notes) | smoke (fake bridge) and live: workbook with 2 rooms |
+| QA, schedules, tags | arch_qa; schedule_create presets + sort_by; room / area / space tags in tag_elements | clean plan without issues; duplicate mark and untagged window found; 4 presets list 1 / 2 / 2 / 2 rows; 5 tags, then 0 (already tagged) |
+
 ## 2026-11-28 · Version 0.30.1 (phases 5, 6, 8, 9 and 13 closed)
 
 | Item | Change | Test |
